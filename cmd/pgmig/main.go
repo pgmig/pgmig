@@ -23,7 +23,10 @@ func run(exitFunc func(code int)) {
 	}
 	l := setupLog(cfg)
 	mig := setupMig(cfg, l)
-	err = mig.Run()
+	committed, err := mig.Run(cfg.Args.Command, cfg.Args.Packages)
+	if err == nil {
+		log.Printf("Saved: %v", *committed)
+	}
 }
 
 // exit after deferred cleanups have run
