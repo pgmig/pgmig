@@ -101,7 +101,7 @@ run:
 	$(GO) run ./cmd/$(PRG)/ create pgmig-testing
 
 run-%:
-	$(GO) run ./cmd/$(PRG)/ $* pgmig-testing
+	$(GO) run ./cmd/$(PRG)/ --verbose --mig.listonly $* a b
 
 ## Build app with checks
 build-all: lint lint-more vet cov build

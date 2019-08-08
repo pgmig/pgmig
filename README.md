@@ -5,7 +5,8 @@ This is an *alpha* state project. See [docs](https://pgmig.github.io/).
 
 ## TODO
 
-* [ ] `*_once.sql`
+* [ ] TODOs in code
 * [ ] overwiew
 * [ ] tests
 * [ ] docs
+

@@ -2,7 +2,7 @@ package main
 
 import (
 	"errors"
-	"fmt"
+	//	"fmt"
 
 	"github.com/jessevdk/go-flags"
 
@@ -15,13 +15,11 @@ import (
 
 // Config holds all config vars
 type Config struct {
-	Addr        string `long:"http_addr" default:"localhost:8080"  description:"Http listen address"`
-	UploadLimit int64  `long:"upload_limit" default:"8" description:"Upload size limit (Mb)"`
-	Verbose     bool   `long:"verbose" description:"Show debug data"`
-	Args        struct {
-		Command  string
-		Packages []string
-	} `positional-args:"yes" required:"yes" description:"COMMAND [package...]"`
+	Verbose bool `long:"verbose" description:"Show debug data"`
+	Args    struct {
+		Command  string   `choice:"create" choice:"test" choice:"clean" choice:"drop" choice:"recreate" description:"create|test|clean|drop|recreate"`
+		Packages []string `description:"dirnames under SQL sources directory in create order"`
+	} `positional-args:"yes" required:"yes"`
 	Mig pgmig.Config `group:"Migrator Options" namespace:"mig"`
 }
 
@@ -43,7 +41,7 @@ func setupConfig(args ...string) (*Config, error) {
 		_, err = p.ParseArgs(args)
 	}
 	if err != nil {
-		fmt.Printf("Args error: %s", err)
+		//fmt.Printf("Args error: %#v", err)
 		if e, ok := err.(*flags.Error); ok && e.Type == flags.ErrHelp {
 			return nil, ErrGotHelp
 		}
