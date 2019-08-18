@@ -4,6 +4,9 @@ CFG            = .env
 
 PRG           ?= $(shell basename $$PWD)
 
+#PKGS ?= a b
+PKGS ?= sql-pgmig
+
 # -----------------------------------------------------------------------------
 # Build config
 
@@ -98,10 +101,13 @@ all: help
 
 ## Run from sources
 run:
-	$(GO) run ./cmd/$(PRG)/ create pgmig-testing
+	$(GO) run ./cmd/$(PRG)/ create $(PKGS)
 
 run-%:
-	$(GO) run ./cmd/$(PRG)/ --verbose --mig.listonly $* a b
+	$(GO) run ./cmd/$(PRG)/ --verbose $* $(PKGS)
+
+run-list:
+	$(GO) run ./cmd/$(PRG)/ --verbose --mig.listonly $* $(PKGS)
 
 ## Build app with checks
 build-all: lint lint-more vet cov build

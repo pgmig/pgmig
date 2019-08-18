@@ -262,7 +262,7 @@ func (mig Migrator) execFiles(tx *pgx.Tx, files []fileDef) error {
 			log.Printf("App error: %s", pgErr.Message)
 		} else {
 			lineNo := strings.Count(string([]rune(query)[:pgErr.Position]), "\n") + 1
-			fmt.Printf("%s:%d [%s %s] %s\n", file, lineNo, pgErr.Severity, pgErr.Code, pgErr.Message)
+			fmt.Printf(">>%s:%d [%s %s] %s\n", file.Name, lineNo, pgErr.Severity, pgErr.Code, pgErr.Message)
 			if pgErr.Detail != "" {
 				fmt.Printf("DETAIL: %s\n", pgErr.Detail)
 			}
