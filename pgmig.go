@@ -107,10 +107,15 @@ func (mig *Migrator) NoticeFunc() func(c *pgx.Conn, n *pgx.Notice) {
 }
 
 type fileDef struct {
-	Pkg       string
 	Name      string
 	IfNewPkg  bool
 	IfNewFile bool
+}
+
+type pkgDef struct {
+	Name  string
+	Op    string
+	Files []fileDef
 }
 
 // Run does all work
@@ -126,26 +131,26 @@ func (mig *Migrator) Run(command string, packages []string) (*bool, error) {
 
 	config.OnNotice = mig.NoticeFunc()
 
-	var files []fileDef
+	var files []pkgDef
 	cfg := mig.Config
 	empty := []string{}
 
 	switch command {
 	case "create":
-		files, err = mig.lookupFiles(cfg.CreateIncludes, cfg.InitIncludes, cfg.OnceIncludes, false, packages)
+		files, err = mig.lookupFiles(command, cfg.CreateIncludes, cfg.InitIncludes, cfg.OnceIncludes, false, packages)
 	case "test":
-		files, err = mig.lookupFiles(cfg.TestIncludes, empty, empty, false, packages)
+		files, err = mig.lookupFiles(command, cfg.TestIncludes, empty, empty, false, packages)
 	case "clean":
-		files, err = mig.lookupFiles(cfg.CleanIncludes, empty, empty, true, packages)
+		files, err = mig.lookupFiles(command, cfg.CleanIncludes, empty, empty, true, packages)
 	case "drop":
-		files, err = mig.lookupFiles(cfg.DropIncludes, empty, empty, true, packages)
+		files, err = mig.lookupFiles(command, cfg.DropIncludes, empty, empty, true, packages)
 	case "recreate":
 		// clean, create
-		files, err = mig.lookupFiles(cfg.CleanIncludes, empty, empty, true, packages)
+		files, err = mig.lookupFiles("clean", cfg.CleanIncludes, empty, empty, true, packages)
 		if err != nil {
 			return nil, err
 		}
-		files1, err1 := mig.lookupFiles(cfg.CreateIncludes, cfg.InitIncludes, cfg.OnceIncludes, false, packages)
+		files1, err1 := mig.lookupFiles("create", cfg.CreateIncludes, cfg.InitIncludes, cfg.OnceIncludes, false, packages)
 		if err1 != nil {
 			err = err1
 		} else {
@@ -194,7 +199,7 @@ func (mig *Migrator) Run(command string, packages []string) (*bool, error) {
 	return &rv, nil
 }
 
-func (mig Migrator) lookupFiles(masks []string, initMasks []string, onceMasks []string, isReverse bool, packages []string) (rv []fileDef, err error) {
+func (mig Migrator) lookupFiles(op string, masks []string, initMasks []string, onceMasks []string, isReverse bool, packages []string) (rv []pkgDef, err error) {
 	pkgs := append(packages[:0:0], packages...)
 	if isReverse {
 		sort.Sort(sort.Reverse(sort.StringSlice(pkgs)))
@@ -204,7 +209,7 @@ func (mig Migrator) lookupFiles(masks []string, initMasks []string, onceMasks []
 
 		root := filepath.Join(mig.Config.Dir, pkg)
 		var files []fileDef
-		err = mig.FS.Walk(root, mig.WalkerFunc(pkg, masks, initMasks, onceMasks, &files))
+		err = mig.FS.Walk(root, mig.WalkerFunc(masks, initMasks, onceMasks, &files))
 		if err != nil {
 			return rv, errors.Wrap(err, "Walk error")
 		}
@@ -213,7 +218,7 @@ func (mig Migrator) lookupFiles(masks []string, initMasks []string, onceMasks []
 			sort.Slice(files, func(i, j int) bool {
 				return files[i].Name < files[j].Name
 			})
-			rv = append(rv, files...)
+			rv = append(rv, pkgDef{Name: pkg, Op: op, Files: files})
 		} else {
 			mig.Log.Warnf("Package %s does not contain %v", pkg, masks)
 		}
@@ -221,69 +226,79 @@ func (mig Migrator) lookupFiles(masks []string, initMasks []string, onceMasks []
 	return
 }
 
-func (mig Migrator) execFiles(tx *pgx.Tx, files []fileDef) error {
+func (mig Migrator) execFiles(tx *pgx.Tx, pkgs []pkgDef) error {
 
 	newPkgs := map[string]bool{} // cache for packages state
-	for _, file := range files {
-		fmt.Printf("Load %s:%s\n", file.Pkg, file.Name)
+	for _, pkg := range pkgs {
+		fmt.Printf("# %s.%s\n", pkg.Name, pkg.Op)
 
 		if !mig.Config.NoHooks {
-			//	_, err = tx.Exec(mig.OnStart,op,file.Pkg)
+			// skip if pgmig.create
+			//_, err = tx.Exec(mig.Config.HookBefore, pkg.Op, pkg.Name)
 		}
 
-		if file.IfNewPkg {
-			isNew, ok := newPkgs[file.Pkg]
+		for _, file := range pkg.Files {
+			fmt.Printf("\t%s\n", file.Name)
+
+			if file.IfNewPkg {
+				isNew, ok := newPkgs[pkg.Name]
+				if !ok {
+					isNew = true //  TODO: ask DB
+					newPkgs[pkg.Name] = isNew
+				}
+				if !isNew {
+					mig.Log.Debugf("Skip file %s:%s because pkg is old", pkg.Name, file.Name)
+					continue
+				}
+			}
+			if file.IfNewFile {
+				isNew := false // TODO: ask DB
+				if !isNew {
+					mig.Log.Debugf("Skip file %s:%s because it is loaded already", pkg.Name, file.Name)
+					// TODO: check csum
+					continue
+				}
+			}
+
+			f := filepath.Join(mig.Config.Dir, pkg.Name, file.Name)
+			s, err := ioutil.ReadFile(f)
+			if err != nil {
+				return errors.Wrap(err, "Reading "+f)
+			}
+			query := string(s)
+			//fmt.Print(query)
+			_, err = tx.Exec(query)
+			if err == nil {
+				continue
+			}
+			pgErr, ok := err.(pgx.PgError)
 			if !ok {
-				isNew = true //  TODO: ask DB
-				newPkgs[file.Pkg] = isNew
+				return errors.Wrap(err, "System error")
 			}
-			if !isNew {
-				mig.Log.Debugf("Skip file %s:%s because pkg is old", file.Pkg, file.Name)
-				continue
+			if pgErr.Code == "P0001" {
+				log.Printf("App error: %s", pgErr.Message)
+			} else {
+				lineNo := strings.Count(string([]rune(query)[:pgErr.Position]), "\n") + 1
+				fmt.Printf(">>%s:%d [%s %s] %s\n", file.Name, lineNo, pgErr.Severity, pgErr.Code, pgErr.Message)
+				if pgErr.Detail != "" {
+					fmt.Printf("DETAIL: %s\n", pgErr.Detail)
+				}
+				if pgErr.Hint != "" {
+					fmt.Printf("HINT: %s\n", pgErr.Hint)
+				}
 			}
+			return errCancel
 		}
-		if file.IfNewFile {
-			isNew := false // TODO: ask DB
-			if !isNew {
-				mig.Log.Debugf("Skip file %s:%s because it is loaded already", file.Pkg, file.Name)
-				// TODO: check csum
-				continue
-			}
+		if !mig.Config.NoHooks {
+			// skip if pgmig.drop
+			// _, err = tx.Exec(mig.Config.HookAfter, pkg.Op, pkg.Name)
 		}
 
-		f := filepath.Join(mig.Config.Dir, file.Pkg, file.Name)
-		s, err := ioutil.ReadFile(f)
-		if err != nil {
-			return errors.Wrap(err, "Reading "+f)
-		}
-		query := string(s)
-		//fmt.Print(query)
-		_, err = tx.Exec(query)
-		if err == nil {
-			continue
-		}
-		pgErr, ok := err.(pgx.PgError)
-		if !ok {
-			return errors.Wrap(err, "System error")
-		}
-		if pgErr.Code == "P0001" {
-			log.Printf("App error: %s", pgErr.Message)
-		} else {
-			lineNo := strings.Count(string([]rune(query)[:pgErr.Position]), "\n") + 1
-			fmt.Printf(">>%s:%d [%s %s] %s\n", file.Name, lineNo, pgErr.Severity, pgErr.Code, pgErr.Message)
-			if pgErr.Detail != "" {
-				fmt.Printf("DETAIL: %s\n", pgErr.Detail)
-			}
-			if pgErr.Hint != "" {
-				fmt.Printf("HINT: %s\n", pgErr.Hint)
-			}
-		}
-		return errCancel
 	}
 	return nil
 }
 
-func (mig Migrator) WalkerFunc(pkg string, mask []string, initMasks []string, onceMasks []string, files *[]fileDef) func(path string, f os.FileInfo, err error) error {
+func (mig Migrator) WalkerFunc(mask []string, initMasks []string, onceMasks []string, files *[]fileDef) func(path string, f os.FileInfo, err error) error {
 	return func(path string, f os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -312,7 +327,7 @@ func (mig Migrator) WalkerFunc(pkg string, mask []string, initMasks []string, on
 			return nil
 		}
 
-		def := fileDef{Pkg: pkg, Name: f.Name()}
+		def := fileDef{Name: f.Name()}
 		for _, m := range initMasks {
 			matched, err = filepath.Match(m, f.Name())
 			if err != nil {

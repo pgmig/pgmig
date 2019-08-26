@@ -5,7 +5,7 @@ CFG            = .env
 PRG           ?= $(shell basename $$PWD)
 
 #PKGS ?= a b
-PKGS ?= sql-pgmig
+PKGS ?= pgmig
 
 # -----------------------------------------------------------------------------
 # Build config
