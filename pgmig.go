@@ -23,12 +23,16 @@ type Config struct {
 	ListOnly bool   `long:"listonly" description:"Show file list and exit"`
 	// TODO: SearchPath
 
-	CreateInclude []string `long:"create" default:"*.sql" default:"!*.drop.sql" default:"!*.clean.sql" description:"File masks for create command"`
-	TestInclude   []string `long:"test" default:"*.test.sql" description:"File masks for test command"`
-	CleanInclude  []string `long:"clean" default:"*.clean.sql" description:"File masks for clean command"`
-	DropInclude   []string `long:"drop" default:"*.drop.sql" default:"*.clean.sql" description:"File masks for drop command"`
-	InitInclude   []string `long:"init" default:"*.init.sql" description:"File masks loaded on create if package is new"`
-	OnceInclude   []string `long:"once" default:"*.once.sql" description:"File masks loaded once on create"`
+	NoHooks    bool   `long:"nohooks" description:"Do not call before/after hooks"`
+	HookBefore string `long:"hook_before" default:"op_before" description:"Func called before command for every pkg"`
+	HookAfter  string `long:"hook_after" default:"op_after" description:"Func called after command for every pkg"`
+
+	CreateIncludes []string `long:"create" default:"*.sql" default:"!*.drop.sql" default:"!*.clean.sql" description:"File masks for create command"`
+	TestIncludes   []string `long:"test" default:"*.test.sql" description:"File masks for test command"`
+	CleanIncludes  []string `long:"clean" default:"*.clean.sql" description:"File masks for clean command"`
+	DropIncludes   []string `long:"drop" default:"*.drop.sql" default:"*.clean.sql" description:"File masks for drop command"`
+	InitIncludes   []string `long:"init" default:"*.init.sql" description:"File masks loaded on create if package is new"`
+	OnceIncludes   []string `long:"once" default:"*.once.sql" description:"File masks loaded once on create"`
 }
 
 // FileSystem holds all of used filesystem access methods
@@ -128,20 +132,20 @@ func (mig *Migrator) Run(command string, packages []string) (*bool, error) {
 
 	switch command {
 	case "create":
-		files, err = mig.lookupFiles(cfg.CreateInclude, cfg.InitInclude, cfg.OnceInclude, false, packages)
+		files, err = mig.lookupFiles(cfg.CreateIncludes, cfg.InitIncludes, cfg.OnceIncludes, false, packages)
 	case "test":
-		files, err = mig.lookupFiles(cfg.TestInclude, empty, empty, false, packages)
+		files, err = mig.lookupFiles(cfg.TestIncludes, empty, empty, false, packages)
 	case "clean":
-		files, err = mig.lookupFiles(cfg.CleanInclude, empty, empty, true, packages)
+		files, err = mig.lookupFiles(cfg.CleanIncludes, empty, empty, true, packages)
 	case "drop":
-		files, err = mig.lookupFiles(cfg.DropInclude, empty, empty, true, packages)
+		files, err = mig.lookupFiles(cfg.DropIncludes, empty, empty, true, packages)
 	case "recreate":
 		// clean, create
-		files, err = mig.lookupFiles(cfg.CleanInclude, empty, empty, true, packages)
+		files, err = mig.lookupFiles(cfg.CleanIncludes, empty, empty, true, packages)
 		if err != nil {
 			return nil, err
 		}
-		files1, err1 := mig.lookupFiles(cfg.CreateInclude, cfg.InitInclude, cfg.OnceInclude, false, packages)
+		files1, err1 := mig.lookupFiles(cfg.CreateIncludes, cfg.InitIncludes, cfg.OnceIncludes, false, packages)
 		if err1 != nil {
 			err = err1
 		} else {
@@ -222,6 +226,10 @@ func (mig Migrator) execFiles(tx *pgx.Tx, files []fileDef) error {
 	newPkgs := map[string]bool{} // cache for packages state
 	for _, file := range files {
 		fmt.Printf("Load %s:%s\n", file.Pkg, file.Name)
+
+		if !mig.Config.NoHooks {
+			//	_, err = tx.Exec(mig.OnStart,op,file.Pkg)
+		}
 
 		if file.IfNewPkg {
 			isNew, ok := newPkgs[file.Pkg]
