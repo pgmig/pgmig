@@ -106,7 +106,7 @@ run:
 run-%:
 	$(GO) run ./cmd/$(PRG)/ --verbose $* $(PKGS)
 
-run-list:
+run-list-%:
 	$(GO) run ./cmd/$(PRG)/ --verbose --mig.listonly $* $(PKGS)
 
 ## Build app with checks
