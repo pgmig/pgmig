@@ -17,7 +17,7 @@ import (
 type Config struct {
 	Verbose bool `long:"verbose" description:"Show debug data"`
 	Args    struct {
-		Command  string   `choice:"create" choice:"test" choice:"clean" choice:"drop" choice:"recreate" description:"create|test|clean|drop|recreate"`
+		Command  string   `choice:"init" choice:"test" choice:"drop" choice:"erase" choice:"reinit" description:"init|test|drop|erase|reinit"`
 		Packages []string `description:"dirnames under SQL sources directory in create order"`
 	} `positional-args:"yes" required:"yes"`
 	Mig pgmig.Config `group:"Migrator Options" namespace:"mig"`

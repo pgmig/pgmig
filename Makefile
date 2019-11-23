@@ -101,7 +101,7 @@ all: help
 
 ## Run from sources
 run:
-	$(GO) run ./cmd/$(PRG)/ create $(PKGS)
+	$(GO) run ./cmd/$(PRG)/ init $(PKGS)
 
 run-%:
 	$(GO) run ./cmd/$(PRG)/ --verbose $* $(PKGS)

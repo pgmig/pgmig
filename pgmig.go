@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/jackc/pgx"
 	"github.com/pkg/errors"
@@ -18,7 +19,7 @@ import (
 
 // Config holds all config vars
 type Config struct {
-	Dir      string `long:"dir" default:"sql" description:"SQL sources directory"`
+	Dir      string `long:"dir" default:"sql" description:"SQL sources directory"` // TODO: pkg/*/sql
 	NoCommit bool   `long:"nocommit" description:"Do not commit work"`
 	ListOnly bool   `long:"listonly" description:"Show file list and exit"`
 	// TODO: SearchPath
@@ -27,12 +28,12 @@ type Config struct {
 	HookBefore string `long:"hook_before" default:"op_before" description:"Func called before command for every pkg"`
 	HookAfter  string `long:"hook_after" default:"op_after" description:"Func called after command for every pkg"`
 
-	CreateIncludes []string `long:"create" default:"*.sql" default:"!*.drop.sql" default:"!*.clean.sql" description:"File masks for create command"`
-	TestIncludes   []string `long:"test" default:"*.test.sql" description:"File masks for test command"`
-	CleanIncludes  []string `long:"clean" default:"*.clean.sql" description:"File masks for clean command"`
-	DropIncludes   []string `long:"drop" default:"*.drop.sql" default:"*.clean.sql" description:"File masks for drop command"`
-	InitIncludes   []string `long:"init" default:"*.init.sql" description:"File masks loaded on create if package is new"`
-	OnceIncludes   []string `long:"once" default:"*.once.sql" description:"File masks loaded once on create"`
+	InitIncludes  []string `long:"init" default:"*.sql" default:"!*.drop.sql" default:"!*.erase.sql" description:"File masks for init command"`
+	TestIncludes  []string `long:"test" default:"*.test.sql" description:"File masks for test command"`
+	NewIncludes   []string `long:"new" default:"*.new.sql" description:"File masks loaded on init if package is new"`
+	DropIncludes  []string `long:"drop" default:"*.drop.sql" description:"File masks for drop command"`
+	EraseIncludes []string `long:"erase" default:"*.erase.sql" default:"*.drop.sql" description:"File masks for drop command"`
+	OnceIncludes  []string `long:"once" default:"*.once.sql" description:"File masks loaded once on init"`
 }
 
 // FileSystem holds all of used filesystem access methods
@@ -43,18 +44,21 @@ type FileSystem interface {
 
 // Migrator holds service data
 type Migrator struct {
-	Config   *Config
-	Log      loggers.Contextual
-	FS       FileSystem
-	noCommit bool
+	Config    *Config
+	Log       loggers.Contextual
+	FS        FileSystem
+	noCommit  bool
+	isNew     bool
+	isNewLock sync.RWMutex
 }
 
 var errCancel = errors.New("Rollback")
 
 const (
-	pgStatusTestCount = "01998"
-	pgStatusTestOk    = "01999"
-	pgStatusTestFail  = "02999"
+	pgStatusTestCount       = "01998"
+	pgStatusTestOk          = "01999"
+	pgStatusTestFail        = "02999"
+	pgStatusDuplicateSchema = "42P06"
 )
 
 // New creates an Service object
@@ -99,9 +103,15 @@ func (mig *Migrator) NoticeFunc() func(c *pgx.Conn, n *pgx.Notice) {
 			//			}
 			//			notices = []pgx.Notice{}
 			mig.SetNoCommit(true)
+		} else if n.Code == pgStatusDuplicateSchema {
+			fmt.Printf("Schema exists already\n")
+			mig.newSchemaSet(false)
 		} else {
 			//	notices = append(notices, *n)
 			fmt.Printf("%s: %s\n", n.Severity, n.Message)
+		}
+		if cur > cnt {
+			mig.Log.Warnf("Wrong tests count: test %d total %d", cur, cnt)
 		}
 	}
 }
@@ -136,21 +146,21 @@ func (mig *Migrator) Run(command string, packages []string) (*bool, error) {
 	empty := []string{}
 
 	switch command {
-	case "create":
-		files, err = mig.lookupFiles(command, cfg.CreateIncludes, cfg.InitIncludes, cfg.OnceIncludes, false, packages)
+	case "init":
+		files, err = mig.lookupFiles(command, cfg.InitIncludes, cfg.NewIncludes, cfg.OnceIncludes, false, packages)
 	case "test":
 		files, err = mig.lookupFiles(command, cfg.TestIncludes, empty, empty, false, packages)
-	case "clean":
-		files, err = mig.lookupFiles(command, cfg.CleanIncludes, empty, empty, true, packages)
 	case "drop":
 		files, err = mig.lookupFiles(command, cfg.DropIncludes, empty, empty, true, packages)
-	case "recreate":
-		// clean, create
-		files, err = mig.lookupFiles("clean", cfg.CleanIncludes, empty, empty, true, packages)
+	case "erase":
+		files, err = mig.lookupFiles(command, cfg.EraseIncludes, empty, empty, true, packages)
+	case "reinit":
+		// drop, init
+		files, err = mig.lookupFiles("drop", cfg.DropIncludes, empty, empty, true, packages)
 		if err != nil {
 			return nil, err
 		}
-		files1, err1 := mig.lookupFiles("create", cfg.CreateIncludes, cfg.InitIncludes, cfg.OnceIncludes, false, packages)
+		files1, err1 := mig.lookupFiles("init", cfg.InitIncludes, cfg.NewIncludes, cfg.OnceIncludes, false, packages)
 		if err1 != nil {
 			err = err1
 		} else {
@@ -226,27 +236,21 @@ func (mig Migrator) lookupFiles(op string, masks []string, initMasks []string, o
 	return
 }
 
-func (mig Migrator) execFiles(tx *pgx.Tx, pkgs []pkgDef) error {
+func (mig *Migrator) execFiles(tx *pgx.Tx, pkgs []pkgDef) error {
 
-	newPkgs := map[string]bool{} // cache for packages state
 	for _, pkg := range pkgs {
 		fmt.Printf("# %s.%s\n", pkg.Name, pkg.Op)
 
 		if !mig.Config.NoHooks {
-			// skip if pgmig.create
+			// TODO: skip on pgmig init
 			//_, err = tx.Exec(mig.Config.HookBefore, pkg.Op, pkg.Name)
 		}
-
+		mig.newSchemaSet(true)
 		for _, file := range pkg.Files {
 			fmt.Printf("\t%s\n", file.Name)
-
 			if file.IfNewPkg {
-				isNew, ok := newPkgs[pkg.Name]
-				if !ok {
-					isNew = true //  TODO: ask DB
-					newPkgs[pkg.Name] = isNew
-				}
-				if !isNew {
+				mig.Log.Debugf("only new: %s\n", file.Name)
+				if !mig.newSchema() {
 					mig.Log.Debugf("Skip file %s:%s because pkg is old", pkg.Name, file.Name)
 					continue
 				}
@@ -269,6 +273,7 @@ func (mig Migrator) execFiles(tx *pgx.Tx, pkgs []pkgDef) error {
 			//fmt.Print(query)
 			_, err = tx.Exec(query)
 			if err == nil {
+				// NOTICE>>: schema "pgmig" already exists, skipping
 				continue
 			}
 			pgErr, ok := err.(pgx.PgError)
@@ -290,7 +295,7 @@ func (mig Migrator) execFiles(tx *pgx.Tx, pkgs []pkgDef) error {
 			return errCancel
 		}
 		if !mig.Config.NoHooks {
-			// skip if pgmig.drop
+			// skip if pgmig.erase
 			// _, err = tx.Exec(mig.Config.HookAfter, pkg.Op, pkg.Name)
 		}
 
@@ -351,4 +356,16 @@ func (mig Migrator) WalkerFunc(mask []string, initMasks []string, onceMasks []st
 		*files = append(*files, def)
 		return nil
 	}
+}
+
+func (mig *Migrator) newSchemaSet(isNew bool) {
+	mig.isNewLock.Lock()
+	defer mig.isNewLock.Unlock()
+	mig.isNew = isNew
+}
+
+func (mig *Migrator) newSchema() bool {
+	mig.isNewLock.RLock()
+	defer mig.isNewLock.RUnlock()
+	return mig.isNew
 }
