@@ -104,6 +104,9 @@ run:
 	$(GO) run ./cmd/$(PRG)/ init $(PKGS)
 
 run-%:
+	$(GO) run ./cmd/$(PRG)/ $* $(PKGS)
+
+vrun-%:
 	$(GO) run ./cmd/$(PRG)/ --verbose $* $(PKGS)
 
 run-list-%:

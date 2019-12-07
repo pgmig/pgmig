@@ -1,11 +1,12 @@
 package pgmig
 
 import (
+	//	"context"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -25,8 +26,8 @@ type Config struct {
 	// TODO: SearchPath
 
 	NoHooks    bool   `long:"nohooks" description:"Do not call before/after hooks"`
-	HookBefore string `long:"hook_before" default:"op_before" description:"Func called before command for every pkg"`
-	HookAfter  string `long:"hook_after" default:"op_after" description:"Func called after command for every pkg"`
+	HookBefore string `long:"hook_before" default:"pkg_op_before" description:"Func called before command for every pkg"`
+	HookAfter  string `long:"hook_after" default:"pkg_op_after" description:"Func called after command for every pkg"`
 
 	InitIncludes  []string `long:"init" default:"*.sql" default:"!*.drop.sql" default:"!*.erase.sql" description:"File masks for init command"`
 	TestIncludes  []string `long:"test" default:"*.test.sql" description:"File masks for test command"`
@@ -44,24 +45,36 @@ type FileSystem interface {
 
 // Migrator holds service data
 type Migrator struct {
-	Config    *Config
-	Log       loggers.Contextual
-	FS        FileSystem
-	noCommit  bool
-	isNew     bool
-	isNewLock sync.RWMutex
+	Config     *Config
+	Log        loggers.Contextual
+	FS         FileSystem
+	noCommit   bool
+	isNew      bool
+	commitLock sync.RWMutex
 }
 
 var errCancel = errors.New("Rollback")
 
 const (
-	pgStatusTestCount       = "01998"
-	pgStatusTestOk          = "01999"
-	pgStatusTestFail        = "02999"
-	pgStatusDuplicateSchema = "42P06"
+	CmdInit   = "init"
+	CmdTest   = "test"
+	CmdDrop   = "drop"
+	CmdErase  = "erase"
+	CmdReInit = "reinit"
+	CmdList   = "list" // TODO
+
+	CorePackage = "pgmig"
+
+	pgStatusTestCount = "01998"
+	pgStatusTestOk    = "01999"
+	pgStatusTestFail  = "02999"
+
+	SQLPkgExists   = "SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)"
+	SQLPkgOpBefore = "SELECT %s.%s(a_op => $1, a_code=> $2, a_version => $3, a_repo => $4)"
+	SQLPkgOpAfter  = "SELECT %s.%s(a_op => $1, a_code=> $2, a_version => $3, a_repo => $4)"
 )
 
-// New creates an Service object
+// New creates an Migrator object
 func New(cfg Config, log loggers.Contextual, fs *FileSystem) *Migrator {
 	mig := Migrator{Config: &cfg, Log: log}
 	if fs == nil {
@@ -73,49 +86,6 @@ func New(cfg Config, log loggers.Contextual, fs *FileSystem) *Migrator {
 	return &mig
 }
 
-func (mig *Migrator) SetNoCommit(commit bool) {
-	// TODO: locks
-	mig.noCommit = commit
-}
-
-func (mig *Migrator) NoCommit() bool {
-	// TODO: locks
-	return mig.noCommit
-}
-
-func (mig *Migrator) NoticeFunc() func(c *pgx.Conn, n *pgx.Notice) {
-	var cnt int
-	var cur int
-	return func(c *pgx.Conn, n *pgx.Notice) {
-		if n.Code == pgStatusTestCount {
-			cnt, _ = strconv.Atoi(n.Message)
-			cur = 1
-			//			notices = []pgx.Notice{}
-		} else if n.Code == pgStatusTestOk {
-			fmt.Printf("(%d/%d) %-20s: Ok\n", cur, cnt, n.Message)
-			cur++
-			//			notices = []pgx.Notice{}
-		} else if n.Code == pgStatusTestFail {
-			fmt.Printf("(%d/%d) %-20s: Not Ok\n%s\n", cur, cnt, n.Message, n.Detail)
-			cur++
-			//			if len(notices) > 0 {
-			//				fmt.Println(notices)
-			//			}
-			//			notices = []pgx.Notice{}
-			mig.SetNoCommit(true)
-		} else if n.Code == pgStatusDuplicateSchema {
-			fmt.Printf("Schema exists already\n")
-			mig.newSchemaSet(false)
-		} else {
-			//	notices = append(notices, *n)
-			fmt.Printf("%s: %s\n", n.Severity, n.Message)
-		}
-		if cur > cnt {
-			mig.Log.Warnf("Wrong tests count: test %d total %d", cur, cnt)
-		}
-	}
-}
-
 type fileDef struct {
 	Name      string
 	IfNewPkg  bool
@@ -125,6 +95,7 @@ type fileDef struct {
 type pkgDef struct {
 	Name  string
 	Op    string
+	Root  string
 	Files []fileDef
 }
 
@@ -146,21 +117,21 @@ func (mig *Migrator) Run(command string, packages []string) (*bool, error) {
 	empty := []string{}
 
 	switch command {
-	case "init":
+	case CmdInit:
 		files, err = mig.lookupFiles(command, cfg.InitIncludes, cfg.NewIncludes, cfg.OnceIncludes, false, packages)
-	case "test":
+	case CmdTest:
 		files, err = mig.lookupFiles(command, cfg.TestIncludes, empty, empty, false, packages)
-	case "drop":
+	case CmdDrop:
 		files, err = mig.lookupFiles(command, cfg.DropIncludes, empty, empty, true, packages)
-	case "erase":
+	case CmdErase:
 		files, err = mig.lookupFiles(command, cfg.EraseIncludes, empty, empty, true, packages)
-	case "reinit":
+	case CmdReInit:
 		// drop, init
-		files, err = mig.lookupFiles("drop", cfg.DropIncludes, empty, empty, true, packages)
+		files, err = mig.lookupFiles(CmdDrop, cfg.DropIncludes, empty, empty, true, packages)
 		if err != nil {
 			return nil, err
 		}
-		files1, err1 := mig.lookupFiles("init", cfg.InitIncludes, cfg.NewIncludes, cfg.OnceIncludes, false, packages)
+		files1, err1 := mig.lookupFiles(CmdInit, cfg.InitIncludes, cfg.NewIncludes, cfg.OnceIncludes, false, packages)
 		if err1 != nil {
 			err = err1
 		} else {
@@ -191,11 +162,17 @@ func (mig *Migrator) Run(command string, packages []string) (*bool, error) {
 	defer tx.Rollback()
 
 	err = mig.execFiles(tx, files)
-
-	if err != nil && err != errCancel {
-		return nil, err
+	if err != nil {
+		pgErr, ok := err.(pgx.PgError)
+		if !ok {
+			return nil, errors.Wrap(err, "System error")
+		}
+		mig.Log.Debugf("%s:%d\n"+pgErr.Hint, pgErr.File, pgErr.Line)
+		mig.Log.Debugf("\n" + pgErr.Where)
+		mig.Log.Debugf("\n" + pgErr.InternalQuery)
+		return nil, errors.Wrap(err, "DB error")
 	}
-	if err != nil || mig.NoCommit() || mig.Config.NoCommit {
+	if mig.NoCommit() || mig.Config.NoCommit || command == CmdTest {
 		fmt.Println("Rollback")
 		err = tx.Rollback()
 	} else {
@@ -209,8 +186,98 @@ func (mig *Migrator) Run(command string, packages []string) (*bool, error) {
 	return &rv, nil
 }
 
+func (mig *Migrator) execFiles(tx *pgx.Tx, pkgs []pkgDef) error {
+
+	for _, pkg := range pkgs {
+		fmt.Printf("# %s.%s\n", pkg.Name, pkg.Op)
+
+		var schemaExists bool
+		err := tx.QueryRow(SQLPkgExists, pkg.Name).Scan(&schemaExists)
+		if err != nil {
+			return err
+		}
+		// TODO: if schemaExists { get & print repo:version }
+		mig.Log.Debugf("Start package: %v / %s / %s / %v", mig.Config.NoHooks, pkg.Name, pkg.Op, schemaExists)
+
+		var version, repo string
+		if !mig.Config.NoHooks && pkg.Op != CmdTest {
+			// hooks enabled
+			if pkg.Op == CmdInit {
+				err = PkgVersion(pkg.Root, &version)
+				if err != nil {
+					return err
+				}
+				err = PkgRepo(pkg.Root, &repo)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("Meta:  %s\t%s\n", version, repo)
+			}
+			if !(pkg.Name == CorePackage && pkg.Op == CmdInit && !schemaExists) {
+				// this is not init for new CorePackage
+				_, err = tx.Exec(fmt.Sprintf(SQLPkgOpBefore, CorePackage, mig.Config.HookBefore), pkg.Op, pkg.Name, version, repo)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		for _, file := range pkg.Files {
+			fmt.Printf("\t%s\n", file.Name)
+			if file.IfNewPkg {
+				mig.Log.Debugf("only new: %s\n", file.Name)
+				if schemaExists {
+					mig.Log.Debugf("Skip file %s:%s because pkg is old", pkg.Name, file.Name)
+					continue
+				}
+			}
+			if file.IfNewFile {
+				/*
+				   TODO:
+				   * calc md5
+				   * isNewFile, err = tx.SelectValue(mig.Config.IsNewFile, pkg.Op, pkg.Name, file.Name, md5)
+				*/
+				isNewFile := false // TODO: ask DB
+				if !isNewFile {
+					mig.Log.Debugf("Skip file %s:%s because it is loaded already", pkg.Name, file.Name)
+					// TODO: check csum
+					continue
+				}
+			}
+
+			f := filepath.Join(pkg.Root, file.Name)
+			s, err := ioutil.ReadFile(f)
+			if err != nil {
+				return errors.Wrap(err, "Reading "+f)
+			}
+			query := string(s)
+			//fmt.Print(query)
+			_, err = tx.Exec(query)
+			if err != nil {
+				pgErr, ok := err.(pgx.PgError)
+				if !ok {
+					return errors.Wrap(err, "System error")
+				}
+				pgErr.File = file.Name
+				pgErr.Line = int32(strings.Count(string([]rune(query)[:pgErr.Position]), "\n") + 1)
+				return pgErr
+			}
+		}
+		if !mig.Config.NoHooks &&
+			pkg.Op != CmdTest &&
+			!(pkg.Name == CorePackage && (pkg.Op == CmdDrop || pkg.Op == CmdErase)) {
+			// hooks enabled and this is not drop/erase for CorePackage
+			_, err := tx.Exec(fmt.Sprintf(SQLPkgOpAfter, CorePackage, mig.Config.HookAfter), pkg.Op, pkg.Name, version, repo)
+			if err != nil {
+				return err
+			}
+		}
+
+	}
+	return nil
+}
+
 func (mig Migrator) lookupFiles(op string, masks []string, initMasks []string, onceMasks []string, isReverse bool, packages []string) (rv []pkgDef, err error) {
-	pkgs := append(packages[:0:0], packages...)
+	pkgs := append(packages[:0:0], packages...) // Copy slice. See https://github.com/go101/go101/wiki
 	if isReverse {
 		sort.Sort(sort.Reverse(sort.StringSlice(pkgs)))
 	}
@@ -228,7 +295,7 @@ func (mig Migrator) lookupFiles(op string, masks []string, initMasks []string, o
 			sort.Slice(files, func(i, j int) bool {
 				return files[i].Name < files[j].Name
 			})
-			rv = append(rv, pkgDef{Name: pkg, Op: op, Files: files})
+			rv = append(rv, pkgDef{Name: pkg, Op: op, Root: root, Files: files})
 		} else {
 			mig.Log.Warnf("Package %s does not contain %v", pkg, masks)
 		}
@@ -236,73 +303,36 @@ func (mig Migrator) lookupFiles(op string, masks []string, initMasks []string, o
 	return
 }
 
-func (mig *Migrator) execFiles(tx *pgx.Tx, pkgs []pkgDef) error {
-
-	for _, pkg := range pkgs {
-		fmt.Printf("# %s.%s\n", pkg.Name, pkg.Op)
-
-		if !mig.Config.NoHooks {
-			// TODO: skip on pgmig init
-			//_, err = tx.Exec(mig.Config.HookBefore, pkg.Op, pkg.Name)
+// NoticeFunc receives PG notices with test metadata and plain
+func (mig *Migrator) NoticeFunc() func(c *pgx.Conn, n *pgx.Notice) {
+	var cnt int
+	var cur int
+	return func(c *pgx.Conn, n *pgx.Notice) {
+		if n.Code == pgStatusTestCount {
+			cnt, _ = strconv.Atoi(n.Message)
+			cur = 0
+			//			notices = []pgx.Notice{}
+		} else if n.Code == pgStatusTestOk {
+			cur++
+			fmt.Printf("(%d/%d) %-20s: Ok\n", cur, cnt, n.Message)
+			//			notices = []pgx.Notice{}
+		} else if n.Code == pgStatusTestFail {
+			cur++
+			fmt.Printf("(%d/%d) %-20s: Not Ok\n%s\n", cur, cnt, n.Message, n.Detail)
+			//			if len(notices) > 0 {
+			//				fmt.Println(notices)
+			//			}
+			//			notices = []pgx.Notice{}
+			mig.SetNoCommit(true)
+		} else {
+			//	notices = append(notices, *n)
+			fmt.Printf("%s: %s\n", n.Severity, n.Message)
 		}
-		mig.newSchemaSet(true)
-		for _, file := range pkg.Files {
-			fmt.Printf("\t%s\n", file.Name)
-			if file.IfNewPkg {
-				mig.Log.Debugf("only new: %s\n", file.Name)
-				if !mig.newSchema() {
-					mig.Log.Debugf("Skip file %s:%s because pkg is old", pkg.Name, file.Name)
-					continue
-				}
-			}
-			if file.IfNewFile {
-				isNew := false // TODO: ask DB
-				if !isNew {
-					mig.Log.Debugf("Skip file %s:%s because it is loaded already", pkg.Name, file.Name)
-					// TODO: check csum
-					continue
-				}
-			}
-
-			f := filepath.Join(mig.Config.Dir, pkg.Name, file.Name)
-			s, err := ioutil.ReadFile(f)
-			if err != nil {
-				return errors.Wrap(err, "Reading "+f)
-			}
-			query := string(s)
-			//fmt.Print(query)
-			_, err = tx.Exec(query)
-			if err == nil {
-				// NOTICE>>: schema "pgmig" already exists, skipping
-				continue
-			}
-			pgErr, ok := err.(pgx.PgError)
-			if !ok {
-				return errors.Wrap(err, "System error")
-			}
-			if pgErr.Code == "P0001" {
-				log.Printf("App error: %s", pgErr.Message)
-			} else {
-				lineNo := strings.Count(string([]rune(query)[:pgErr.Position]), "\n") + 1
-				fmt.Printf(">>%s:%d [%s %s] %s\n", file.Name, lineNo, pgErr.Severity, pgErr.Code, pgErr.Message)
-				if pgErr.Detail != "" {
-					fmt.Printf("DETAIL: %s\n", pgErr.Detail)
-				}
-				if pgErr.Hint != "" {
-					fmt.Printf("HINT: %s\n", pgErr.Hint)
-				}
-			}
-			return errCancel
+		if cur > cnt && (n.Code == pgStatusTestOk || n.Code == pgStatusTestFail) {
+			mig.Log.Warnf("Wrong tests count: test %d total %d", cur, cnt)
 		}
-		if !mig.Config.NoHooks {
-			// skip if pgmig.erase
-			// _, err = tx.Exec(mig.Config.HookAfter, pkg.Op, pkg.Name)
-		}
-
 	}
-	return nil
 }
-
 func (mig Migrator) WalkerFunc(mask []string, initMasks []string, onceMasks []string, files *[]fileDef) func(path string, f os.FileInfo, err error) error {
 	return func(path string, f os.FileInfo, err error) error {
 		if err != nil {
@@ -358,14 +388,32 @@ func (mig Migrator) WalkerFunc(mask []string, initMasks []string, onceMasks []st
 	}
 }
 
-func (mig *Migrator) newSchemaSet(isNew bool) {
-	mig.isNewLock.Lock()
-	defer mig.isNewLock.Unlock()
-	mig.isNew = isNew
+func (mig *Migrator) SetNoCommit(commit bool) {
+	mig.commitLock.Lock()
+	defer mig.commitLock.Unlock()
+	mig.noCommit = commit
 }
 
-func (mig *Migrator) newSchema() bool {
-	mig.isNewLock.RLock()
-	defer mig.isNewLock.RUnlock()
-	return mig.isNew
+func (mig *Migrator) NoCommit() bool {
+	mig.commitLock.RLock()
+	defer mig.commitLock.RUnlock()
+	return mig.noCommit
+}
+
+func PkgVersion(path string, rv *string) error {
+	out, err := exec.Command("git", "-C", path, "describe", "--tags", "--always").Output()
+	if err != nil {
+		return err
+	}
+	*rv = strings.TrimSuffix(string(out), "\n")
+	return nil
+}
+
+func PkgRepo(path string, rv *string) error {
+	out, err := exec.Command("git", "-C", path, "config", "--get", "remote.origin.url").Output()
+	if err != nil {
+		return err
+	}
+	*rv = strings.TrimSuffix(string(out), "\n")
+	return nil
 }
