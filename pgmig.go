@@ -29,10 +29,12 @@ type Config struct {
 	HookBefore string `long:"hook_before" default:"pkg_op_before" description:"Func called before command for every pkg"`
 	HookAfter  string `long:"hook_after" default:"pkg_op_after" description:"Func called after command for every pkg"`
 
-	InitIncludes  []string `long:"init" default:"*.sql" default:"!*.drop.sql" default:"!*.erase.sql" description:"File masks for init command"`
-	TestIncludes  []string `long:"test" default:"*.test.sql" description:"File masks for test command"`
-	NewIncludes   []string `long:"new" default:"*.new.sql" description:"File masks loaded on init if package is new"`
-	DropIncludes  []string `long:"drop" default:"*.drop.sql" description:"File masks for drop command"`
+	//nolint:staticcheck // Multiple struct tag "default" is allowed
+	InitIncludes []string `long:"init" default:"*.sql" default:"!*.drop.sql" default:"!*.erase.sql" description:"File masks for init command"`
+	TestIncludes []string `long:"test" default:"*.test.sql" description:"File masks for test command"`
+	NewIncludes  []string `long:"new" default:"*.new.sql" description:"File masks loaded on init if package is new"`
+	DropIncludes []string `long:"drop" default:"*.drop.sql" description:"File masks for drop command"`
+	//nolint:staticcheck // Multiple struct tag "default" is allowed
 	EraseIncludes []string `long:"erase" default:"*.erase.sql" default:"*.drop.sql" description:"File masks for drop command"`
 	OnceIncludes  []string `long:"once" default:"*.once.sql" description:"File masks loaded once on init"`
 }
@@ -45,15 +47,13 @@ type FileSystem interface {
 
 // Migrator holds service data
 type Migrator struct {
-	Config     *Config
-	Log        loggers.Contextual
-	FS         FileSystem
-	noCommit   bool
-	isNew      bool
+	Config   *Config
+	Log      loggers.Contextual
+	FS       FileSystem
+	noCommit bool
+	//isNew      bool
 	commitLock sync.RWMutex
 }
-
-var errCancel = errors.New("Rollback")
 
 const (
 	CmdInit   = "init"
@@ -159,8 +159,12 @@ func (mig *Migrator) Run(command string, packages []string) (*bool, error) {
 	}
 
 	tx, _ := db.Begin()
-	defer tx.Rollback()
-
+	defer func() {
+		err = tx.Rollback()
+		if err != nil && err != pgx.ErrTxClosed {
+			mig.Log.Error(err)
+		}
+	}()
 	err = mig.execFiles(tx, files)
 	if err != nil {
 		pgErr, ok := err.(pgx.PgError)
@@ -168,8 +172,13 @@ func (mig *Migrator) Run(command string, packages []string) (*bool, error) {
 			return nil, errors.Wrap(err, "System error")
 		}
 		mig.Log.Debugf("%s:%d\n"+pgErr.Hint, pgErr.File, pgErr.Line)
-		mig.Log.Debugf("\n" + pgErr.Where)
-		mig.Log.Debugf("\n" + pgErr.InternalQuery)
+		mig.Log.Debugf("\n(%#v)", pgErr)
+		if pgErr.Where != "" {
+			mig.Log.Debugf("\n" + pgErr.Where)
+		}
+		if pgErr.InternalQuery != "" {
+			mig.Log.Debugf("\n" + pgErr.InternalQuery)
+		}
 		return nil, errors.Wrap(err, "DB error")
 	}
 	if mig.NoCommit() || mig.Config.NoCommit || command == CmdTest {
@@ -276,7 +285,8 @@ func (mig *Migrator) execFiles(tx *pgx.Tx, pkgs []pkgDef) error {
 	return nil
 }
 
-func (mig Migrator) lookupFiles(op string, masks []string, initMasks []string, onceMasks []string, isReverse bool, packages []string) (rv []pkgDef, err error) {
+// TODO: get some from embedded FS, other form subdir
+func (mig *Migrator) lookupFiles(op string, masks []string, initMasks []string, onceMasks []string, isReverse bool, packages []string) (rv []pkgDef, err error) {
 	pkgs := append(packages[:0:0], packages...) // Copy slice. See https://github.com/go101/go101/wiki
 	if isReverse {
 		sort.Sort(sort.Reverse(sort.StringSlice(pkgs)))
@@ -333,7 +343,7 @@ func (mig *Migrator) NoticeFunc() func(c *pgx.Conn, n *pgx.Notice) {
 		}
 	}
 }
-func (mig Migrator) WalkerFunc(mask []string, initMasks []string, onceMasks []string, files *[]fileDef) func(path string, f os.FileInfo, err error) error {
+func (mig *Migrator) WalkerFunc(mask []string, initMasks []string, onceMasks []string, files *[]fileDef) func(path string, f os.FileInfo, err error) error {
 	return func(path string, f os.FileInfo, err error) error {
 		if err != nil {
 			return err
