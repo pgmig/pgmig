@@ -1,4 +1,4 @@
-// +build !test
+//+build !test
 
 // This file holds code which does not covered by tests
 

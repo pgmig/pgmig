@@ -1,7 +1,14 @@
 package main
 
 import (
+	"context"
 	"log"
+
+	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v4"
+	// TODO	"github.com/jackc/pgx/v4/log/logrusadapter"
+
+	"github.com/pgmig/pgmig"
 )
 
 func run(exitFunc func(code int)) {
@@ -13,10 +20,43 @@ func run(exitFunc func(code int)) {
 		return
 	}
 	l := setupLog(cfg)
-	mig := setupMig(cfg, l)
-	committed, err := mig.Run(cfg.Args.Command, cfg.Args.Packages)
-	if err == nil { // shutdown shows error otherwise
-		log.Printf("Saved: %v", *committed)
+	mig := pgmig.New(cfg.Mig, l, nil)
+
+	config, err := pgx.ParseConfig(cfg.DSN)
+	if err != nil {
+		return
+	}
+	//	config.Logger = logrusadapter.NewLogger(l)
+	config.OnNotice = func(c *pgconn.PgConn, n *pgconn.Notice) {
+		mig.ProcessNotice(n.Code, n.Message, n.Detail)
+	}
+
+	// TODO: statement_cache_mode = "describe"
+	config.BuildStatementCache = nil // disable stmt cache
+	ctx := context.Background()
+	dbh, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		return
+	}
+
+	tx, err := dbh.Begin(ctx) //Tx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return
+	}
+	defer func() {
+		er := tx.Rollback(ctx)
+		if er != nil && er != pgx.ErrTxClosed {
+			mig.Log.Error(er)
+		}
+	}()
+
+	commit, err := mig.Run(tx, cfg.Args.Command, cfg.Args.Packages)
+	if err == nil && *commit {
+		log.Println("Commit")
+		err = tx.Commit(ctx)
+	}
+	if err == nil || err != pgx.ErrTxClosed { // shutdown shows error otherwise
+		log.Printf("Saved: %v", *commit)
 	}
 }
 
@@ -30,8 +70,10 @@ func shutdown(exitFunc func(code int), e error) {
 		case ErrBadArgs:
 			code = 2
 		default:
-			code = 1
-			log.Printf("Run error: %+v", e.Error())
+			if e != pgx.ErrTxClosed {
+				code = 1
+				log.Printf("Run error: %+v", e)
+			}
 		}
 		exitFunc(code)
 	}

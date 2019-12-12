@@ -148,7 +148,7 @@ cov: coverage.out
 
 # internal target
 coverage.out: $(SOURCES)
-	$(GO) test -test.v -test.race -coverprofile=$@ -covermode=atomic ./...
+	$(GO) test -test.v -test.race -coverprofile=$@ -covermode=atomic -tags test ./...
 
 ## Open coverage report in browser
 cov-html: cov
@@ -182,6 +182,9 @@ db-drop: docker-wait
 psql: docker-wait ## Run psql
 	@docker exec -it $$PG_CONTAINER psql -U $$PGUSER -d $$PGDATABASE
 
+## Run local psql
+psql-local:
+	@psql
 
 # ------------------------------------------------------------------------------
 ## Misc

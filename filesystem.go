@@ -1,8 +1,10 @@
-// Package lookupfs implements a filesystem backend for apitpl.
-// It can use native filesystem (by default) or embedded filesystem (which can be set via FileSystem func).
+// This file holds a filesystem backend.
+// So pgmig can use native filesystem (by default) or embedded filesystem (which can be set in New).
+
 package pgmig
 
 import (
+	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,7 +16,7 @@ func (fs defaultFS) Walk(path string, wf filepath.WalkFunc) error {
 	// Walk does not follow symbolic links.
 	//	return filepath.Walk(path, wf)
 
-	d, err := os.Open(path)
+	d, err := fs.Open(path)
 	if err != nil {
 		return err
 	}
@@ -43,10 +45,9 @@ func (fs defaultFS) Open(name string) (http.File, error) {
 	return f, nil
 }
 
-/*
 // ReadFile reads file via filesystem method
-func (lfs LookupFileSystem) ReadFile(name string) (string, error) {
-	f, err := lfs.fs.Open(name)
+func (fs defaultFS) ReadFile(name string) (string, error) {
+	f, err := fs.Open(name)
 	if err != nil {
 		return "", err
 	}
@@ -58,4 +59,3 @@ func (lfs LookupFileSystem) ReadFile(name string) (string, error) {
 	s := string(b)
 	return s, nil
 }
-*/

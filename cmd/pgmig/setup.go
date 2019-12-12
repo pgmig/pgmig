@@ -15,7 +15,8 @@ import (
 
 // Config holds all config vars
 type Config struct {
-	Verbose bool `long:"verbose" description:"Show debug data"`
+	DSN     string `long:"dsn" default:"" description:"Database URL"`
+	Verbose bool   `long:"verbose" description:"Show debug data"`
 	Args    struct {
 		//nolint:staticcheck // Multiple struct tag "choice" is allowed
 		Command  string   `choice:"init" choice:"test" choice:"drop" choice:"erase" choice:"reinit" description:"init|test|drop|erase|reinit"`
@@ -34,7 +35,7 @@ var (
 // setupConfig loads flags from args (if given) or command flags and ENV otherwise
 func setupConfig(args ...string) (*Config, error) {
 	cfg := &Config{}
-	p := flags.NewParser(cfg, flags.Default)
+	p := flags.NewParser(cfg, flags.Default) //  HelpFlag | PrintErrors | PassDoubleDash
 	var err error
 	if len(args) == 0 {
 		_, err = p.Parse()
@@ -57,13 +58,8 @@ func setupLog(cfg *Config) loggers.Contextual {
 	if cfg.Verbose {
 		l.SetLevel(logrus.DebugLevel)
 		l.SetReportCaller(true)
+	} else {
+		l.SetLevel(logrus.WarnLevel)
 	}
 	return &mapper.Logger{Logger: l} // Same as mapper.NewLogger(l) but without info log message
-}
-
-// setupMig creates pg migrator instance
-func setupMig(cfg *Config, log loggers.Contextual) *pgmig.Migrator {
-
-	mig := pgmig.New(cfg.Mig, log, nil)
-	return mig
 }
