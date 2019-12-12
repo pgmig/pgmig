@@ -277,14 +277,12 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) error {
 			}
 
 			query := string(s)
-			//fmt.Print(">>>>>>>>>", query)
 			_, err = tx.Exec(ctx, query)
 			if err != nil {
 				pgErr, ok := err.(*pgconn.PgError)
 				if !ok {
 					return errors.Wrap(err, "System error")
 				}
-				fmt.Printf(">>>> %#v", pgErr)
 				pgErr.File = file.Name
 				pgErr.Line = int32(strings.Count(string([]rune(query)[:pgErr.Position]), "\n") + 1)
 				return pgErr

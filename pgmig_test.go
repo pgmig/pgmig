@@ -27,6 +27,10 @@ type ServerSuite struct {
 	hook *test.Hook
 }
 
+var (
+	version = "loaded from git in SetupSuite"
+)
+
 func (ss *ServerSuite) SetupSuite() {
 
 	// Fill config with default values
@@ -45,6 +49,8 @@ func (ss *ServerSuite) SetupSuite() {
 	defer ctrl.Finish()
 
 	ss.srv = New(ss.cfg, log, nil)
+
+	GitVersion(".", &version)
 }
 
 func TestSuite(t *testing.T) {
@@ -70,10 +76,10 @@ func (ss *ServerSuite) TestRun() {
 
 	ct0 := pgconn.CommandTag{} // {0, ' ', 0}
 	fmt.Println(ct0)
+
 	gomock.InOrder(
-		tx.EXPECT().Query(ctx, "SELECT true FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2",
-			"pgmig", "pkg").Return(rv, nil),
-		tx.EXPECT().Exec(ctx, "SELECT pgmig.pkg_op_before(a_op => $1, a_code => $2, a_version => $3, a_repo => $4)", "init", "a", "v0.30-1-gbe1f21f", "git@github.com:pgmig/pgmig.git").Return(ct0, nil),
+		tx.EXPECT().Query(ctx, SQLPgMigExists, "pgmig", "pkg").Return(rv, nil),
+		tx.EXPECT().Exec(ctx, "SELECT pgmig.pkg_op_before(a_op => $1, a_code => $2, a_version => $3, a_repo => $4)", "init", "a", version, "git@github.com:pgmig/pgmig.git").Return(ct0, nil),
 		tx.EXPECT().Exec(ctx, "SELECT 'init'"), //.Return(ct0, nil),
 		tx.EXPECT().Exec(ctx, "SELECT 'ddl1';\nSELECT 'ddl2';\n"),
 		tx.EXPECT().Exec(ctx, "SELECT 'ddl test';\n"),
@@ -81,7 +87,7 @@ func (ss *ServerSuite) TestRun() {
 		tx.EXPECT().Exec(ctx, "SELECT pgmig.script_protect(a_pkg => $1, a_file => $2, a_md5 => $3)", "a", "03.once.sql", "8f422d0ba69c33f13825fb28d682f288"),
 		tx.EXPECT().Exec(ctx, "SELECT 'once';\n"),
 		tx.EXPECT().Exec(ctx, "SELECT 'new';\n"),
-		tx.EXPECT().Exec(ctx, "SELECT pgmig.pkg_op_after(a_op => $1, a_code => $2, a_version => $3, a_repo => $4)", "init", "a", "v0.30-1-gbe1f21f", "git@github.com:pgmig/pgmig.git"),
+		tx.EXPECT().Exec(ctx, "SELECT pgmig.pkg_op_after(a_op => $1, a_code => $2, a_version => $3, a_repo => $4)", "init", "a", version, "git@github.com:pgmig/pgmig.git"),
 	)
 
 	ss.srv.Config.Dir = "testdata"
