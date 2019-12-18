@@ -43,13 +43,22 @@ PG_NETWORK    ?= dcape_net
 # -----------------------------------------------------------------------------
 # Runtime data
 
+# DB name
 PGDATABASE    ?= $(PRG)
-PGUSER        ?= $(PRG)
+# DB user who owns created objects
+PGUSER        ?= $(PRG)_adm
+# DB user password
 PGPASSWORD    ?= $(shell < /dev/urandom tr -dc A-Za-z0-9 | head -c14; echo)
+# DB role for tests run (if given)
+PGMIG_TEST_ROLE ?=
 
+# DB host
 PGHOST        ?= localhost
+# DB port
 PGPORT        ?= 5432
+# connect via SSL
 PGSSLMODE     ?= disable
+# Client name inside database
 PGAPPNAME     ?= $(PRG)
 
 define CONFIG_DEFAULT
@@ -58,16 +67,18 @@ define CONFIG_DEFAULT
 
 # Database
 
-# Host
+# DB host
 PGHOST=$(PGHOST)
-# Port
+# DB port
 PGPORT=$(PGPORT)
-# Name
+# DB name
 PGDATABASE=$(PGDATABASE)
-# User
+# DB user who owns created objects
 PGUSER=$(PGUSER)
-# Password
+# DB user password
 PGPASSWORD=$(PGPASSWORD)
+# DB role for tests run (if given)
+PGMIG_TEST_ROLE=$(PGMIG_TEST_ROLE)
 
 # Client name inside database
 PGAPPNAME=$(PGAPPNAME)
@@ -104,10 +115,14 @@ run:
 	$(GO) run ./cmd/$(PRG)/ init $(PKGS)
 
 run-%:
-	$(GO) run -ldflags "-X main.version=$(VERSION)" ./cmd/$(PRG)/ $* $(PKGS)
+	if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
+	$(GO) run -ldflags "-X main.version=$(VERSION)" ./cmd/$(PRG)/ $$opts $* $(PKGS)
 
 vrun-%:
-	$(GO) run ./cmd/$(PRG)/ --verbose $* $(PKGS)
+	if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
+	$(GO) run ./cmd/$(PRG)/ $$opts --verbose $* $(PKGS)
+
+#	$(GO) run ./cmd/$(PRG)/ --verbose --mig.var=test_role:$(PGMIG_TEST_ROLE) $* $(PKGS)
 
 run-list-%:
 	$(GO) run ./cmd/$(PRG)/ --verbose --mig.listonly $* $(PKGS)
@@ -169,8 +184,10 @@ docker-wait:
 
 ## Create user, db and load dump
 db-create: docker-wait
-	@echo "*** $@ ***" ; \
-	docker exec -i $$PG_CONTAINER psql -U postgres -c "CREATE USER \"$$PGUSER\" WITH PASSWORD '$$PGPASSWORD';" || true ; \
+	echo "*** $@ ***" ; \
+	sql="CREATE USER \"$$PGUSER\" WITH PASSWORD '$$PGPASSWORD'" ; \
+	if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then sql="$$sql IN ROLE \"$$PGMIG_TEST_ROLE\"" ; fi ; \
+	docker exec -i $$PG_CONTAINER psql -U postgres -c "$$sql" || true ; \
 	docker exec -i $$PG_CONTAINER psql -U postgres -c "CREATE DATABASE \"$$PGDATABASE\" OWNER \"$$PGUSER\";" || db_exists=1 ; \
 
 ## Drop database and user
