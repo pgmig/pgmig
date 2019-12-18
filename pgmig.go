@@ -20,10 +20,12 @@ import (
 
 // Config holds all config vars
 type Config struct {
-	Dir      string `long:"dir" default:"sql" description:"SQL sources directory"` // TODO: pkg/*/sql
-	NoCommit bool   `long:"nocommit" description:"Do not commit work"`
-	ListOnly bool   `long:"listonly" description:"Show file list and exit"`
-	Debug    bool   `long:"debug" description:"Print debug info"` // TODO: process
+	Dir        string            `long:"dir" default:"sql" description:"SQL sources directory"` // TODO: pkg/*/sql
+	Vars       map[string]string `long:"var" description:"Transaction variable(s)"`
+	VarsPrefix string            `long:"var_prefix" default:"pgmig.var." description:"Transaction variable(s) prefix"`
+	NoCommit   bool              `long:"nocommit" description:"Do not commit work"`
+	ListOnly   bool              `long:"listonly" description:"Show file list and exit"`
+	Debug      bool              `long:"debug" description:"Print debug info"` // TODO: process
 
 	// TODO: SearchPath?
 
@@ -84,13 +86,17 @@ const (
 	CorePackage = "pgmig"
 	// CoreTable is the name of table inside core package(scheme) which must exist if pgmig is installed already
 	CoreTable = "pkg"
+	// CorePrefix is the name of var which holds PG variable names prefix
+	CorePrefix = "pgmig.prefix"
 
 	pgStatusTestCount = "01998"
 	pgStatusTestOk    = "01999"
 	pgStatusTestFail  = "02999"
 
-	// SQLPgMigExists is a sql query to check pgmig.pkg table presense
+	// SQLPgMigExists is a query to check pgmig.pkg table presense
 	SQLPgMigExists = "SELECT true FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2"
+	// SQLPgMigVarPrefix returns var prefix if redefined
+	SQLPgMigVar = "SELECT current_setting($1, true)"
 	// SQLPkgVersion is a query for installed package version
 	SQLPkgVersion      = "SELECT %s.%s($1)"
 	SQLPkgOpBefore     = "SELECT %s.%s(a_op => $1, a_code => $2, a_version => $3, a_repo => $4)"
@@ -176,22 +182,27 @@ func (mig *Migrator) Run(tx pgx.Tx, command string, packages []string) (*bool, e
 	}
 
 	fmt.Printf("PgMig exists: %v\n", mig.installed)
-
 	err = mig.execFiles(tx, files)
 	if err != nil {
 		pgErr, ok := err.(*pgconn.PgError)
 		if !ok {
 			return &rv, errors.Wrap(err, "System error")
 		}
-		mig.Log.Debugf("%s:%d\n"+pgErr.Hint, pgErr.File, pgErr.Line)
-		mig.Log.Debugf("\n(%#v)", pgErr)
+		// Print SQL error
+		fmt.Printf("#  %s:%d %s %s %s\n", pgErr.File, pgErr.Line, pgErr.Severity, pgErr.Code, pgErr.Message)
+		if pgErr.Detail != "" {
+			fmt.Println("#  Detail: " + pgErr.Detail)
+		}
+		if pgErr.Hint != "" {
+			fmt.Println("#  Hint: " + pgErr.Hint)
+		}
 		if pgErr.Where != "" {
-			mig.Log.Debug("\n" + pgErr.Where)
+			fmt.Println("#  Where: " + pgErr.Where)
 		}
 		if pgErr.InternalQuery != "" {
-			mig.Log.Debug("\n" + pgErr.InternalQuery)
+			fmt.Println("#  Query: " + pgErr.InternalQuery)
 		}
-		return &rv, errors.Wrap(pgErr, "DB error")
+		return &rv, nil
 	}
 	if mig.noCommit() || mig.Config.NoCommit || command == CmdTest {
 		rv = false
@@ -205,6 +216,12 @@ func (mig *Migrator) Run(tx pgx.Tx, command string, packages []string) (*bool, e
 }
 
 func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) error {
+	if len(mig.Config.Vars) != 0 {
+		err := mig.setVars(tx)
+		if err != nil {
+			return err
+		}
+	}
 	for _, pkg := range pkgs {
 		fmt.Printf("# %s.%s\n", pkg.Name, pkg.Op)
 		var installedVersion string
@@ -240,7 +257,7 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) error {
 			}
 		}
 		for _, file := range pkg.Files {
-			fmt.Printf("\t%s\n", file.Name)
+			fmt.Printf("# %s\n", file.Name)
 			if file.IfNewPkg {
 				if pkgExists {
 					mig.Log.Debugf("Skip file %s/%s because pkg is old", pkg.Name, file.Name)
@@ -283,6 +300,7 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) error {
 				if !ok {
 					return errors.Wrap(err, "System error")
 				}
+				// PG does not know about file. Set it and calc lime no
 				pgErr.File = file.Name
 				pgErr.Line = int32(strings.Count(string([]rune(query)[:pgErr.Position]), "\n") + 1)
 				return pgErr
@@ -341,15 +359,16 @@ func (mig *Migrator) ProcessNotice(code, message, detail string) {
 	case pgStatusTestCount:
 		mig.cnt, _ = strconv.Atoi(message)
 		mig.cur = 0
+		fmt.Printf("%d..%d\n", 1, mig.cnt)
 		//			notices = []pgx.Notice{}
 	case pgStatusTestOk:
 		mig.cur++
-		fmt.Printf("\t\t(%d/%d) %-20s: Ok\n", mig.cur, mig.cnt, message)
+		fmt.Printf("ok %d - %s\n", mig.cur, message)
 		//			notices = []pgx.Notice{}
 	case pgStatusTestFail:
 		mig.cur++
 		// TODO: send to channel {Type:.., Message: []string}
-		fmt.Printf("\t\t(%d/%d) %-20s: Not Ok\n%s\n", mig.cur, mig.cnt, message, detail)
+		fmt.Printf("not ok %d - %s\n  ---\n%s\n  ---", mig.cur, message, detail)
 		//			if len(notices) > 0 {
 		//				fmt.Println(notices)
 		//			}
@@ -357,7 +376,7 @@ func (mig *Migrator) ProcessNotice(code, message, detail string) {
 		mig.setNoCommit(true)
 	default:
 		//	notices = append(notices, *n)
-		//mig.Log.Infof("%s: %s\n", n.Severity, n.Message)
+		mig.Log.Infof("%s: %s\n", code, message)
 	}
 	if mig.cur > mig.cnt && (code == pgStatusTestOk || code == pgStatusTestFail) {
 		mig.Log.Warnf("Wrong tests count: test %d total %d", mig.cur, mig.cnt)
@@ -432,6 +451,35 @@ func (mig *Migrator) noCommit() bool {
 	mig.commitLock.RLock()
 	defer mig.commitLock.RUnlock()
 	return mig.doRollback
+}
+
+func (mig *Migrator) setVars(tx pgx.Tx) error {
+	ctx := context.Background()
+	mig.Log.Debugf("Setting vars %#v\n", mig.Config.Vars)
+	var varPrefix *string // pgx.NullString
+	err := queryValue(tx, &varPrefix, SQLPgMigVar, CorePrefix)
+	if err != nil {
+		return errors.Wrap(err, "SQLPgMigVarPrefix")
+	}
+	if varPrefix == nil {
+		varPrefix = &mig.Config.VarsPrefix
+		_, err := tx.Exec(ctx, "SELECT set_config($1 || $2, $3, true)", CorePrefix, "", *varPrefix)
+		if err != nil {
+			return errors.Wrap(err, "Set_config error")
+		}
+
+	}
+	for k, v := range mig.Config.Vars {
+		if v == "" {
+			continue
+		}
+		fmt.Printf("%s = %s\n", k, v)
+		_, err := tx.Exec(ctx, "SELECT set_config($1 || $2, $3, true)", varPrefix, k, v)
+		if err != nil {
+			return errors.Wrap(err, "Set_config error")
+		}
+	}
+	return nil
 }
 
 // queryValue fills rv with single valued SQL result if present
