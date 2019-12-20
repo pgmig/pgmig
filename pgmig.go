@@ -39,14 +39,10 @@ type Config struct {
 	ScriptProtected string `long:"script_protected" default:"script_protected" description:"Func for fetchng md5 of protected script"`
 	ScriptProtect   string `long:"script_protect" default:"script_protect" description:"Func for saving md5 of protected script"`
 
-	//nolint:staticcheck // Multiple struct tag "default" is allowed
-	InitIncludes []string `long:"init" default:"*.sql" default:"!*.drop.sql" default:"!*.erase.sql" description:"File masks for init command"`
+	InitIncludes []string `long:"init" default:"*.sql" description:"File masks for init command"`
 	TestIncludes []string `long:"test" default:"*.test.sql" description:"File masks for test command"`
 	NewIncludes  []string `long:"new" default:"*.new.sql" description:"File masks loaded on init if package is new"`
-	DropIncludes []string `long:"drop" default:"*.drop.sql" description:"File masks for drop command"`
-	//nolint:staticcheck // Multiple struct tag "default" is allowed
-	EraseIncludes []string `long:"erase" default:"*.erase.sql" default:"*.drop.sql" description:"File masks for drop command"`
-	OnceIncludes  []string `long:"once" default:"*.once.sql" description:"File masks loaded once on init"`
+	OnceIncludes []string `long:"once" default:"*.once.sql" description:"File masks loaded once on init"`
 }
 
 // FileSystem holds all of used filesystem access methods
@@ -95,14 +91,18 @@ const (
 
 	// SQLPgMigExists is a query to check pgmig.pkg table presense
 	SQLPgMigExists = "SELECT true FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2"
-	// SQLPgMigVarPrefix returns var prefix if redefined
+	// SQLPgMigVar gets Pg config var
 	SQLPgMigVar = "SELECT current_setting($1, true)"
+	// SQLSetVar sets Pg config var
+	SQLSetVar = "SELECT set_config($1 || $2, $3, true)"
 	// SQLPkgVersion is a query for installed package version
-	SQLPkgVersion      = "SELECT %s.%s($1)"
-	SQLPkgOpBefore     = "SELECT %s.%s(a_op => $1, a_code => $2, a_version => $3, a_repo => $4)"
-	SQLPkgOpAfter      = "SELECT %s.%s(a_op => $1, a_code => $2, a_version => $3, a_repo => $4)"
+	SQLPkgVersion = "SELECT %s.%s($1)"
+	// SQLPkgOp called before and after running an op
+	SQLPkgOp = "SELECT %s.%s(a_op => $1, a_code => $2, a_version => $3, a_repo => $4)"
+	// SQLScriptProtected checks if file registered in db
 	SQLScriptProtected = "SELECT %s.%s(a_pkg => $1, a_file => $2)"
-	SQLScriptProtect   = "SELECT %s.%s(a_pkg => $1, a_file => $2, a_md5 => $3)"
+	// SQLScriptProtect registers file in db
+	SQLScriptProtect = "SELECT %s.%s(a_pkg => $1, a_file => $2, a_md5 => $3)"
 )
 
 // New creates an Migrator object
@@ -145,12 +145,12 @@ func (mig *Migrator) Run(tx pgx.Tx, command string, packages []string) (*bool, e
 	case CmdTest:
 		files, err = mig.lookupFiles(command, cfg.TestIncludes, empty, empty, false, packages)
 	case CmdDrop:
-		files, err = mig.lookupFiles(command, cfg.DropIncludes, empty, empty, true, packages)
+		files, err = mig.lookupFiles(command, empty, empty, empty, true, packages)
 	case CmdErase:
-		files, err = mig.lookupFiles(command, cfg.EraseIncludes, empty, empty, true, packages)
+		files, err = mig.lookupFiles(command, empty, empty, empty, true, packages)
 	case CmdReInit:
 		// drop, init
-		files, err = mig.lookupFiles(CmdDrop, cfg.DropIncludes, empty, empty, true, packages)
+		files, err = mig.lookupFiles(CmdDrop, empty, empty, empty, true, packages)
 		if err != nil {
 			return &rv, nil
 		}
@@ -188,20 +188,7 @@ func (mig *Migrator) Run(tx pgx.Tx, command string, packages []string) (*bool, e
 		if !ok {
 			return &rv, errors.Wrap(err, "System error")
 		}
-		// Print SQL error
-		fmt.Printf("#  %s:%d %s %s %s\n", pgErr.File, pgErr.Line, pgErr.Severity, pgErr.Code, pgErr.Message)
-		if pgErr.Detail != "" {
-			fmt.Println("#  Detail: " + pgErr.Detail)
-		}
-		if pgErr.Hint != "" {
-			fmt.Println("#  Hint: " + pgErr.Hint)
-		}
-		if pgErr.Where != "" {
-			fmt.Println("#  Where: " + pgErr.Where)
-		}
-		if pgErr.InternalQuery != "" {
-			fmt.Println("#  Query: " + pgErr.InternalQuery)
-		}
+		printPgError(pgErr)
 		return &rv, nil
 	}
 	if mig.noCommit() || mig.Config.NoCommit || command == CmdTest {
@@ -237,7 +224,7 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) error {
 		pkgExists := (installedVersion != "")
 		ctx := context.Background()
 		var version, repo string
-		if !mig.Config.NoHooks && pkg.Op != CmdTest {
+		if !mig.Config.NoHooks && pkg.Op == CmdInit {
 			// hooks enabled
 			if pkg.Op == CmdInit {
 				if err := GitVersion(pkg.Root, &version); err != nil {
@@ -250,14 +237,14 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) error {
 			}
 			if !(pkg.Name == CorePackage && pkg.Op == CmdInit && !pkgExists) {
 				// this is not "init" for new CorePackage
-				if _, err := tx.Exec(ctx, fmt.Sprintf(SQLPkgOpBefore, CorePackage, mig.Config.HookBefore),
+				if _, err := tx.Exec(ctx, fmt.Sprintf(SQLPkgOp, CorePackage, mig.Config.HookBefore),
 					pkg.Op, pkg.Name, version, repo); err != nil {
 					return err
 				}
 			}
 		}
 		for _, file := range pkg.Files {
-			fmt.Printf("# %s\n", file.Name)
+			fmt.Printf("\r# %s ", file.Name)
 			if file.IfNewPkg {
 				if pkgExists {
 					mig.Log.Debugf("Skip file %s/%s because pkg is old", pkg.Name, file.Name)
@@ -280,7 +267,6 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) error {
 				md5New := fmt.Sprintf("%x", md5.Sum([]byte(s)))
 				if md5Old != nil {
 					mig.Log.Debugf("Skip file %s/%s because it is loaded already", pkg.Name, file.Name)
-					fmt.Printf("Skip file %s/%s because it is loaded already", pkg.Name, file.Name)
 					if *md5Old != md5New {
 						mig.Log.Warnf("Warning md5 changed for %s:%s from %s to %s", pkg.Name, file.Name, *md5Old, md5New)
 					}
@@ -307,16 +293,15 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) error {
 			}
 		}
 		if !mig.Config.NoHooks && pkg.Op != CmdTest {
+			// hooks enabled and this is not drop/erase for CorePackage
+			if _, err := tx.Exec(ctx, fmt.Sprintf(SQLPkgOp, CorePackage, mig.Config.HookAfter),
+				pkg.Op, pkg.Name, version, repo); err != nil {
+				fmt.Printf(">>>> %#v", err)
+				return errors.Wrap(err, "SQLPkgOpAfter")
+			}
 			if pkg.Name == CorePackage && (pkg.Op == CmdDrop || pkg.Op == CmdErase) {
 				mig.installed = false
 				mig.Log.Debug("pgmig is not installed now")
-			} else {
-				// hooks enabled and this is not drop/erase for CorePackage
-				if _, err := tx.Exec(ctx, fmt.Sprintf(SQLPkgOpAfter, CorePackage, mig.Config.HookAfter),
-					pkg.Op, pkg.Name, version, repo); err != nil {
-					fmt.Printf(">>>> %#v", err)
-					return errors.Wrap(err, "SQLPkgOpAfter")
-				}
 			}
 		}
 	}
@@ -331,10 +316,13 @@ func (mig *Migrator) lookupFiles(op string, masks []string, initMasks []string, 
 		mig.Log.Debugf("Packages: %#v", pkgs)
 	}
 	for _, pkg := range pkgs {
-		mig.Log.Debugf("Looking in %s for %v", pkg, masks)
-
 		root := filepath.Join(mig.Config.Dir, pkg)
 		var files []fileDef
+		if len(masks) == 0 {
+			rv = append(rv, pkgDef{Name: pkg, Op: op, Root: root, Files: files})
+			continue
+		}
+		mig.Log.Debugf("Looking in %s for %v", pkg, masks)
 		err = mig.FS.Walk(root, mig.walkerFunc(masks, initMasks, onceMasks, &files))
 		if err != nil {
 			return rv, errors.Wrap(err, "Walk error")
@@ -359,7 +347,7 @@ func (mig *Migrator) ProcessNotice(code, message, detail string) {
 	case pgStatusTestCount:
 		mig.cnt, _ = strconv.Atoi(message)
 		mig.cur = 0
-		fmt.Printf("%d..%d\n", 1, mig.cnt)
+		fmt.Printf("\n%d..%d\n", 1, mig.cnt)
 		//			notices = []pgx.Notice{}
 	case pgStatusTestOk:
 		mig.cur++
@@ -463,18 +451,17 @@ func (mig *Migrator) setVars(tx pgx.Tx) error {
 	}
 	if varPrefix == nil {
 		varPrefix = &mig.Config.VarsPrefix
-		_, err := tx.Exec(ctx, "SELECT set_config($1 || $2, $3, true)", CorePrefix, "", *varPrefix)
+		_, err := tx.Exec(ctx, SQLSetVar, CorePrefix, "", *varPrefix)
 		if err != nil {
 			return errors.Wrap(err, "Set_config error")
 		}
-
 	}
 	for k, v := range mig.Config.Vars {
 		if v == "" {
 			continue
 		}
 		fmt.Printf("%s = %s\n", k, v)
-		_, err := tx.Exec(ctx, "SELECT set_config($1 || $2, $3, true)", varPrefix, k, v)
+		_, err := tx.Exec(ctx, SQLSetVar, varPrefix, k, v)
 		if err != nil {
 			return errors.Wrap(err, "Set_config error")
 		}
@@ -504,5 +491,22 @@ func SliceReverse(pkgs []string) {
 	for i := len(pkgs)/2 - 1; i >= 0; i-- {
 		opp := len(pkgs) - 1 - i
 		pkgs[i], pkgs[opp] = pkgs[opp], pkgs[i]
+	}
+}
+
+// printPgError print Pg error struct
+func printPgError(e *pgconn.PgError) {
+	fmt.Printf("#  %s:%d %s %s %s\n", e.File, e.Line, e.Severity, e.Code, e.Message)
+	if e.Detail != "" {
+		fmt.Println("#  Detail: " + e.Detail)
+	}
+	if e.Hint != "" {
+		fmt.Println("#  Hint: " + e.Hint)
+	}
+	if e.Where != "" {
+		fmt.Println("#  Where: " + e.Where)
+	}
+	if e.InternalQuery != "" {
+		fmt.Println("#  Query: " + e.InternalQuery)
 	}
 }

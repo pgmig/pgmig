@@ -57,7 +57,7 @@ func setupLog(cfg *Config) loggers.Contextual {
 	l := logrus.New()
 	if cfg.Verbose {
 		l.SetLevel(logrus.DebugLevel)
-		l.SetReportCaller(true)
+		//	l.SetReportCaller(true)
 	} else {
 		l.SetLevel(logrus.WarnLevel)
 	}

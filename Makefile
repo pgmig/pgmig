@@ -115,17 +115,17 @@ run:
 	$(GO) run ./cmd/$(PRG)/ init $(PKGS)
 
 run-%:
-	if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
+	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
 	$(GO) run -ldflags "-X main.version=$(VERSION)" ./cmd/$(PRG)/ $$opts $* $(PKGS)
 
 vrun-%:
-	if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
+	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
 	$(GO) run ./cmd/$(PRG)/ $$opts --verbose $* $(PKGS)
 
 #	$(GO) run ./cmd/$(PRG)/ --verbose --mig.var=test_role:$(PGMIG_TEST_ROLE) $* $(PKGS)
 
 run-list-%:
-	$(GO) run ./cmd/$(PRG)/ --verbose --mig.listonly $* $(PKGS)
+	@$(GO) run ./cmd/$(PRG)/ --verbose --mig.listonly $* $(PKGS)
 
 ## Build app with checks
 build-all: lint lint-more vet cov build

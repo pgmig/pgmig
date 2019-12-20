@@ -39,7 +39,7 @@ func run(exitFunc func(code int)) {
 		return
 	}
 
-	tx, err := dbh.Begin(ctx) //Tx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	tx, err := dbh.Begin(ctx)
 	if err != nil {
 		return
 	}
