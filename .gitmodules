@@ -1,0 +1,3 @@
+[submodule "sql/pgmig"]
+	path = sql/pgmig
+	url = https://github.com/pgmig-sql/pgmig.git

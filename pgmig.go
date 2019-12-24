@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"fmt"
-	"net/http"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,11 +16,12 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/pkg/errors"
 	"gopkg.in/birkirb/loggers.v1"
+
+	"github.com/pgmig/gitinfo"
 )
 
 // Config holds all config vars
 type Config struct {
-	Dir        string            `long:"dir" default:"sql" description:"SQL sources directory"` // TODO: pkg/*/sql
 	Vars       map[string]string `long:"var" description:"Transaction variable(s)"`
 	VarsPrefix string            `long:"var_prefix" default:"pgmig.var." description:"Transaction variable(s) prefix"`
 	NoCommit   bool              `long:"nocommit" description:"Do not commit work"`
@@ -43,18 +44,14 @@ type Config struct {
 	TestIncludes []string `long:"test" default:"*.test.sql" description:"File masks for test command"`
 	NewIncludes  []string `long:"new" default:"*.new.sql" description:"File masks loaded on init if package is new"`
 	OnceIncludes []string `long:"once" default:"*.once.sql" description:"File masks loaded once on init"`
-}
 
-// FileSystem holds all of used filesystem access methods
-type FileSystem interface {
-	Walk(root string, walkFn filepath.WalkFunc) error
-	Open(name string) (http.File, error)
-	ReadFile(name string) (string, error)
+	GitInfo gitinfo.Config `group:"GitInfo Options" namespace:"gi"`
 }
 
 // Migrator holds service data
 type Migrator struct {
 	Config     *Config
+	Root       string
 	Log        loggers.Contextual
 	FS         FileSystem
 	doRollback bool
@@ -106,12 +103,12 @@ const (
 )
 
 // New creates an Migrator object
-func New(cfg Config, log loggers.Contextual, fs *FileSystem) *Migrator {
-	mig := Migrator{Config: &cfg, Log: log}
+func New(cfg Config, log loggers.Contextual, fs FileSystem, root string) *Migrator {
+	mig := Migrator{Config: &cfg, Log: log, Root: root}
 	if fs == nil {
 		mig.FS = defaultFS{}
 	} else {
-		mig.FS = *fs
+		mig.FS = fs
 	}
 	mig.Log.Debugf("CFG: %#v\n", cfg)
 	return &mig
@@ -164,7 +161,7 @@ func (mig *Migrator) Run(tx pgx.Tx, command string, packages []string) (*bool, e
 		return &rv, errors.New("Unknown command " + command)
 	}
 	if err != nil {
-		return &rv, nil
+		return &rv, err
 	}
 	if len(files) == 0 {
 		mig.Log.Warn("No files found")
@@ -202,44 +199,51 @@ func (mig *Migrator) Run(tx pgx.Tx, command string, packages []string) (*bool, e
 	return &rv, nil
 }
 
-func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) error {
+// gitinfoFileSystem used for conversion from pgmig.FileSystem to gitinfo.FileSystem
+type gitinfoFileSystem struct {
+	FileSystem
+}
+
+// Open like http.FileSystem's Open
+func (fs gitinfoFileSystem) Open(name string) (gitinfo.File, error) { return fs.FileSystem.Open(name) }
+
+func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) (err error) {
 	if len(mig.Config.Vars) != 0 {
-		err := mig.setVars(tx)
+		err = mig.setVars(tx)
 		if err != nil {
-			return err
+			return
 		}
 	}
 	for _, pkg := range pkgs {
 		fmt.Printf("# %s.%s\n", pkg.Name, pkg.Op)
 		var installedVersion string
 		if mig.installed {
-			err := queryValue(tx, &installedVersion, fmt.Sprintf(SQLPkgVersion, CorePackage, mig.Config.PkgVersion), pkg.Name)
+			err = queryValue(tx, &installedVersion, fmt.Sprintf(SQLPkgVersion, CorePackage, mig.Config.PkgVersion), pkg.Name)
 			if err != nil {
-				return err
+				return
 			}
 			if installedVersion != "" {
 				fmt.Printf("Installed version: %s\n", installedVersion)
 			}
 		}
 		pkgExists := (installedVersion != "")
+
 		ctx := context.Background()
-		var version, repo string
+		info := &gitinfo.GitInfo{}
 		if !mig.Config.NoHooks && pkg.Op == CmdInit {
 			// hooks enabled
 			if pkg.Op == CmdInit {
-				if err := GitVersion(pkg.Root, &version); err != nil {
-					return err
+				info, err = gitinfo.New(mig.Config.GitInfo).ReadOrMake(gitinfoFileSystem{mig.FS}, pkg.Root)
+				if err != nil {
+					return
 				}
-				if err := GitRepo(pkg.Root, &repo); err != nil {
-					return err
-				}
-				fmt.Printf("New version:       %s from %s\n", version, repo)
+				fmt.Printf("New version:       %s from %s\n", info.Version, info.Repository)
 			}
 			if !(pkg.Name == CorePackage && pkg.Op == CmdInit && !pkgExists) {
 				// this is not "init" for new CorePackage
-				if _, err := tx.Exec(ctx, fmt.Sprintf(SQLPkgOp, CorePackage, mig.Config.HookBefore),
-					pkg.Op, pkg.Name, version, repo); err != nil {
-					return err
+				if _, err = tx.Exec(ctx, fmt.Sprintf(SQLPkgOp, CorePackage, mig.Config.HookBefore),
+					pkg.Op, pkg.Name, info.Version, info.Repository); err != nil {
+					return
 				}
 			}
 		}
@@ -252,7 +256,13 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) error {
 				}
 			}
 			f := filepath.Join(pkg.Root, file.Name)
-			s, err := mig.FS.ReadFile(f)
+			fh, err := mig.FS.Open(f)
+			if err != nil {
+				return errors.Wrap(err, "Open "+f)
+			}
+			defer fh.Close()
+
+			s, err := ioutil.ReadAll(fh)
 			if err != nil {
 				return errors.Wrap(err, "Reading "+f)
 			}
@@ -264,7 +274,7 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) error {
 				if err != nil {
 					return errors.Wrap(err, "SQLScriptProtected")
 				}
-				md5New := fmt.Sprintf("%x", md5.Sum([]byte(s)))
+				md5New := fmt.Sprintf("%x", md5.Sum(s))
 				if md5Old != nil {
 					mig.Log.Debugf("Skip file %s/%s because it is loaded already", pkg.Name, file.Name)
 					if *md5Old != md5New {
@@ -279,6 +289,8 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) error {
 				}
 			}
 
+			// TODO: if isTest - вызвать test_before/*set-role; set search_path*/ и test_after /*reset role; set search_path*/
+
 			query := string(s)
 			_, err = tx.Exec(ctx, query)
 			if err != nil {
@@ -292,11 +304,11 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) error {
 				return pgErr
 			}
 		}
+
 		if !mig.Config.NoHooks && pkg.Op != CmdTest {
 			// hooks enabled and this is not drop/erase for CorePackage
 			if _, err := tx.Exec(ctx, fmt.Sprintf(SQLPkgOp, CorePackage, mig.Config.HookAfter),
-				pkg.Op, pkg.Name, version, repo); err != nil {
-				fmt.Printf(">>>> %#v", err)
+				pkg.Op, pkg.Name, info.Version, info.Repository); err != nil {
 				return errors.Wrap(err, "SQLPkgOpAfter")
 			}
 			if pkg.Name == CorePackage && (pkg.Op == CmdDrop || pkg.Op == CmdErase) {
@@ -308,7 +320,7 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) error {
 	return nil
 }
 
-// TODO: get some from embedded FS, other form subdir
+// lookup files in mig.FS
 func (mig *Migrator) lookupFiles(op string, masks []string, initMasks []string, onceMasks []string, isReverse bool, packages []string) (rv []pkgDef, err error) {
 	pkgs := append(packages[:0:0], packages...) // Copy slice. See https://github.com/go101/go101/wiki
 	if isReverse {
@@ -316,7 +328,7 @@ func (mig *Migrator) lookupFiles(op string, masks []string, initMasks []string, 
 		mig.Log.Debugf("Packages: %#v", pkgs)
 	}
 	for _, pkg := range pkgs {
-		root := filepath.Join(mig.Config.Dir, pkg)
+		root := filepath.Join(mig.Root, pkg)
 		var files []fileDef
 		if len(masks) == 0 {
 			rv = append(rv, pkgDef{Name: pkg, Op: op, Root: root, Files: files})

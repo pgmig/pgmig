@@ -1,5 +1,8 @@
 package main
 
+//go:generate gitinfo ../../sql/pgmig
+//go:generate go-imbed -union-fs ../../sql internal/sql
+
 import (
 	"context"
 	"log"
@@ -9,7 +12,18 @@ import (
 	// TODO	"github.com/jackc/pgx/v4/log/logrusadapter"
 
 	"github.com/pgmig/pgmig"
+	"github.com/pgmig/pgmig/cmd/pgmig/internal/sql"
 )
+
+// SQLRoot hardcoded in go:generate
+const SQLRoot = "sql"
+
+// pgmigFileSystem used for conversion from sql.FileSystem to pgmig.FileSystem
+type pgmigFileSystem struct {
+	sql.FileSystem
+}
+
+func (fs pgmigFileSystem) Open(name string) (pgmig.File, error) { return fs.FileSystem.Open(name) }
 
 func run(exitFunc func(code int)) {
 	var err error
@@ -20,7 +34,15 @@ func run(exitFunc func(code int)) {
 		return
 	}
 	l := setupLog(cfg)
-	mig := pgmig.New(cfg.Mig, l, nil)
+
+	fs, e := sql.NewUnionFS(SQLRoot)
+	if e != nil {
+		err = e
+		return
+	}
+
+	cfg.Mig.GitInfo.Root = SQLRoot
+	mig := pgmig.New(cfg.Mig, l, pgmigFileSystem{fs}, "")
 
 	config, err := pgx.ParseConfig(cfg.DSN)
 	if err != nil {

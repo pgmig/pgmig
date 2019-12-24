@@ -48,9 +48,7 @@ func (ss *ServerSuite) SetupSuite() {
 	ctrl := gomock.NewController(ss.T())
 	defer ctrl.Finish()
 
-	ss.srv = New(ss.cfg, log, nil)
-
-	GitVersion(".", &version)
+	ss.srv = New(ss.cfg, log, nil, "testdata")
 }
 
 func TestSuite(t *testing.T) {
@@ -89,8 +87,6 @@ func (ss *ServerSuite) TestRun() {
 		tx.EXPECT().Exec(ctx, "SELECT 'new';\n"),
 		tx.EXPECT().Exec(ctx, "SELECT pgmig.pkg_op_after(a_op => $1, a_code => $2, a_version => $3, a_repo => $4)", "init", "a", version, "git@github.com:pgmig/pgmig.git"),
 	)
-
-	ss.srv.Config.Dir = "testdata"
 
 	commit, err := ss.srv.Run(tx, "init", []string{"a"}) // []string{"a", "b"})
 

@@ -23,6 +23,10 @@ type Config struct {
 		Packages []string `description:"dirnames under SQL sources directory in create order"`
 	} `positional-args:"yes" required:"yes"`
 	Mig pgmig.Config `group:"Migrator Options" namespace:"mig"`
+
+	// SQL packages root. Not used with embedded fs
+	// SQLRoot        string            `long:"sql" default:"sql" description:"SQL sources directory"` // TODO: pkg/*/sql
+
 }
 
 var (

@@ -4,17 +4,32 @@
 package pgmig
 
 import (
-	"io/ioutil"
-	"net/http"
+	"io"
 	"os"
 	"path/filepath"
 )
 
+// FileSystem holds all of used filesystem access methods
+type FileSystem interface {
+	Walk(root string, walkFn filepath.WalkFunc) error
+	Open(name string) (File, error)
+}
+
+type File interface {
+	io.Closer
+	io.Reader
+	io.Seeker
+	Readdir(count int) ([]os.FileInfo, error)
+	Stat() (os.FileInfo, error)
+}
+
 type defaultFS struct{}
 
 func (fs defaultFS) Walk(path string, wf filepath.WalkFunc) error {
-	// Walk does not follow symbolic links.
-	//	return filepath.Walk(path, wf)
+	// Walk does not follow symbolic links, by design. Otherwise it is difficult to avoid loops.
+	// https://github.com/golang/go/issues/4759#issuecomment-66074349
+	// If it does not matter, use
+	//  return filepath.Walk(path, wf)
 
 	d, err := fs.Open(path)
 	if err != nil {
@@ -25,9 +40,9 @@ func (fs defaultFS) Walk(path string, wf filepath.WalkFunc) error {
 	if err != nil {
 		return err
 	}
-	for _, fi := range files {
-		if fi.Mode().IsRegular() {
-			err := wf(path, fi, err)
+	for _, file := range files {
+		if file.Mode().IsRegular() {
+			err := wf(path, file, err)
 			if err != nil {
 				return err
 			}
@@ -37,25 +52,7 @@ func (fs defaultFS) Walk(path string, wf filepath.WalkFunc) error {
 }
 
 // Open like http.FileSystem's Open
-func (fs defaultFS) Open(name string) (http.File, error) {
-	f, err := os.Open(name)
-	if err != nil {
-		return nil, err // TODO: What with mapDirOpenError(err, fullName)?
-	}
-	return f, nil
-}
+func (fs defaultFS) Open(name string) (File, error) { return os.Open(name) }
 
 // ReadFile reads file via filesystem method
-func (fs defaultFS) ReadFile(name string) (string, error) {
-	f, err := fs.Open(name)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	b, err := ioutil.ReadAll(f)
-	if err != nil {
-		return "", err
-	}
-	s := string(b)
-	return s, nil
-}
+//func (fs defaultFS) ReadFile(name string) ([]byte, error) { return ioutil.ReadFile(name) }

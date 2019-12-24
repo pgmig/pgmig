@@ -2,6 +2,8 @@ module github.com/pgmig/pgmig
 
 go 1.12
 
+// replace github.com/pgmig/gitinfo v0.11.2 => ../gitinfo
+
 require (
 	github.com/birkirb/loggers-mapper-logrus v0.0.0-20180326232643-461f2d8e6f72
 	github.com/golang/mock v1.3.1
@@ -9,6 +11,7 @@ require (
 	github.com/jackc/pgproto3/v2 v2.0.0
 	github.com/jackc/pgx/v4 v4.1.2
 	github.com/jessevdk/go-flags v1.4.0
+	github.com/pgmig/gitinfo v0.11.3
 	github.com/pkg/errors v0.8.1
 	github.com/shopspring/decimal v0.0.0-20191130220710-360f2bc03045 // indirect
 	github.com/sirupsen/logrus v1.4.2

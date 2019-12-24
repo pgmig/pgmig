@@ -122,6 +122,14 @@ vrun-%:
 	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
 	$(GO) run ./cmd/$(PRG)/ $$opts --verbose $* $(PKGS)
 
+cmd-%: build
+	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
+	./$(PRG) $$opts $* $(PKGS)
+
+vcmd-%: build
+	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
+	./$(PRG) $$opts --verbose $* $(PKGS)
+
 #	$(GO) run ./cmd/$(PRG)/ --verbose --mig.var=test_role:$(PGMIG_TEST_ROLE) $* $(PKGS)
 
 run-list-%:
@@ -131,7 +139,7 @@ run-list-%:
 build-all: lint lint-more vet cov build
 
 ## Build app
-build: 
+build: gen
 	go build -ldflags "-X main.version=$(VERSION)" ./cmd/$(PRG)
 
 ## Build app used in docker from scratch
