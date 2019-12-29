@@ -4,8 +4,7 @@ CFG            = .env
 
 PRG           ?= $(shell basename $$PWD)
 
-#PKGS ?= a b
-PKGS ?= pgmig
+PKGS          ?= pgmig
 
 # -----------------------------------------------------------------------------
 # Build config
@@ -13,6 +12,12 @@ PKGS ?= pgmig
 GO            ?= go
 VERSION       ?= $(shell git describe --tags)
 SOURCES       ?= cmd/*/*.go *.go
+
+OS            ?= linux
+ARCH          ?= amd64
+STAMP         ?= $$(date +%Y-%m-%d_%H:%M.%S)
+ALLARCH       ?= "linux/amd64 linux/386 darwin/386 windows/amd64"
+DIRDIST       ?= dist
 
 # -----------------------------------------------------------------------------
 # Docker image config
@@ -182,6 +187,43 @@ cov-clean:
 	rm -f coverage.*
 
 # ------------------------------------------------------------------------------
+## build app for all platforms
+buildall:
+	@echo "*** $@ ***"
+	@[ -d .git ] && GH=`git describe --tags` || GH=nogit ; \
+for a in "$(ALLARCH)" ; do \
+  echo "** $${a%/*} $${a#*/}" ; \
+  P=$(PRG)_$${a%/*}_$${a#*/} ; \
+  [ "$${a%/*}" == "windows" ] && P=$$P.exe ; \
+  GOOS=$${a%/*} GOARCH=$${a#*/} go build -o $$P -ldflags \
+  "-X main.version=$$GH" ./cmd/$(PRG) ; \
+done
+
+## create disro files
+dist: clean buildall
+	@echo "*** $@ ***"
+	@[ -d .git ] && GH=`git describe --tags` || GH=nogit ; \
+	[ -d $(DIRDIST) ] || mkdir $(DIRDIST) ; \
+sha256sum $(PRG)* > $(DIRDIST)/SHA256SUMS ; \
+for a in "$(ALLARCH)" ; do \
+  echo "** $${a%/*} $${a#*/}" ; \
+  P=$(PRG)_$${a%/*}_$${a#*/} ; \
+  [ "$${a%/*}" == "windows" ] && P1=$$P.exe || P1=$$P ; \
+  zip "$(DIRDIST)/$$P-$$GH.zip" "$$P1" README.md ; \
+done
+
+## clean generated distrib files
+clean:
+	@echo "*** $@ ***" ; \
+	  for a in "$(ALLARCH)" ; do \
+	    P=$(PRG)_$${a%/*}_$${a#*/} ; \
+	    [ -f $$P ] && rm $$P || true ; \
+	  done
+	@[ -f $$P.exe ] && rm $$P.exe || true ; \
+	@[ -d $(DIRDIST) ] && rm -rf $(DIRDIST) || true
+	@[ -f $(PRG) ] && rm -f $(PRG) || true
+
+# ------------------------------------------------------------------------------
 # DB operations with docker and [dcape](https://github.com/dopos/dcape)
 
 # (internal) Wait for postgresql container start
@@ -192,11 +234,11 @@ docker-wait:
 
 ## Create user, db and load dump
 db-create: docker-wait
-	echo "*** $@ ***" ; \
+	@echo "*** $@ ***" ; \
 	sql="CREATE USER \"$$PGUSER\" WITH PASSWORD '$$PGPASSWORD'" ; \
 	if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then sql="$$sql IN ROLE \"$$PGMIG_TEST_ROLE\"" ; fi ; \
-	docker exec -i $$PG_CONTAINER psql -U postgres -c "$$sql" || true ; \
-	docker exec -i $$PG_CONTAINER psql -U postgres -c "CREATE DATABASE \"$$PGDATABASE\" OWNER \"$$PGUSER\";" || db_exists=1 ; \
+	docker exec -i $$PG_CONTAINER psql -U postgres -c "$$sql" 2> >(grep -v "already exists" >&2) || true ; \
+	docker exec -i $$PG_CONTAINER psql -U postgres -c "CREATE DATABASE \"$$PGDATABASE\" OWNER \"$$PGUSER\";" 2> >(grep -v "already exists" >&2) || db_exists=1 ; \
 
 ## Drop database and user
 db-drop: docker-wait
