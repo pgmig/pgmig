@@ -1,14 +1,38 @@
 # pgmig
 postgresql migration library &amp; tool
 
+
+[![GoDoc][gd1]][gd2]
+ [![codecov][cc1]][cc2]
+ [![Build Status][bs1]][bs2]
+ [![GoCard][gc1]][gc2]
+ [![GitHub Release][gr1]][gr2]
+ [![GitHub license][gl1]][gl2]
+
+[bs1]: https://cloud.drone.io/api/badges/pgmig/pgmig/status.svg
+[bs2]: https://cloud.drone.io/pgmig/pgmig
+[cc1]: https://codecov.io/gh/pgmig/pgmig/branch/master/graph/badge.svg
+[cc2]: https://codecov.io/gh/pgmig/pgmig
+[gd1]: https://godoc.org/github.com/pgmig/pgmig?status.svg
+[gd2]: https://godoc.org/github.com/pgmig/pgmig
+[gc1]: https://goreportcard.com/badge/github.com/pgmig/pgmig
+[gc2]: https://goreportcard.com/report/github.com/pgmig/pgmig
+[gr1]: https://img.shields.io/github/release/pgmig/pgmig.svg
+[gr2]: https://github.com/pgmig/pgmig/releases
+[gl1]: https://img.shields.io/github/license/pgmig/pgmig.svg
+[gl2]: https://github.com/pgmig/pgmig/blob/master/LICENSE
+
 This is an *alpha* state project. See [docs](https://pgmig.github.io/).
 
 ## Notes
 
-### sqlx vs pgx
+### why pgx
 
-Test results are received via `RAISE NOTICE` which is supported in pgx, but don't in sqlx, see [details](https://stackoverflow.com/a/59276504/5199825)
+In this lib, test results are received via `RAISE NOTICE` which is supported in pgx, but don't in sqlx, see [details](https://stackoverflow.com/a/59276504/5199825)
 
+### why [go-imbed](https://github.com/growler/go-imbed)
+
+Because I didn't find another lib which supports UnionFS, ie checks OS filesystem before embedded. If you know better, drop me a line please.
 
 ## TODO
 
