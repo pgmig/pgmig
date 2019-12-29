@@ -15,6 +15,7 @@ type FileSystem interface {
 	Open(name string) (File, error)
 }
 
+// File is an interface for os.File struct
 type File interface {
 	io.Closer
 	io.Reader

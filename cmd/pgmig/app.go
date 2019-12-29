@@ -1,13 +1,15 @@
 package main
 
 //go:generate gitinfo ../../sql/pgmig
-//go:generate go-imbed -union-fs ../../sql internal/sql
+
+// embedFS by https://github.com/growler/go-imbed
+//go:generate go-imbed -union-fs -no-http-handler ../../sql internal/sql
 
 import (
 	"context"
 	"log"
+	"sync"
 
-	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	// TODO	"github.com/jackc/pgx/v4/log/logrusadapter"
 
@@ -44,19 +46,8 @@ func run(exitFunc func(code int)) {
 	cfg.Mig.GitInfo.Root = SQLRoot
 	mig := pgmig.New(cfg.Mig, l, pgmigFileSystem{fs}, "")
 
-	config, err := pgx.ParseConfig(cfg.DSN)
-	if err != nil {
-		return
-	}
-	//	config.Logger = logrusadapter.NewLogger(l)
-	config.OnNotice = func(c *pgconn.PgConn, n *pgconn.Notice) {
-		mig.ProcessNotice(n.Code, n.Message, n.Detail)
-	}
-
-	// TODO: statement_cache_mode = "describe"
-	config.BuildStatementCache = nil // disable stmt cache
 	ctx := context.Background()
-	dbh, err := pgx.ConnectConfig(ctx, config)
+	dbh, err := mig.Connect(cfg.DSN)
 	if err != nil {
 		return
 	}
@@ -72,11 +63,16 @@ func run(exitFunc func(code int)) {
 		}
 	}()
 
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go mig.PrintMessages(&wg)
 	commit, err := mig.Run(tx, cfg.Args.Command, cfg.Args.Packages)
 	if err == nil && *commit {
 		log.Println("Commit")
 		err = tx.Commit(ctx)
 	}
+	close(mig.MessageChan)
+	wg.Wait()
 	if err == nil || err != pgx.ErrTxClosed { // shutdown shows error otherwise
 		log.Printf("Saved: %v", *commit)
 	}

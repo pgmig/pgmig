@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
+	"github.com/mattn/go-isatty"
 	"github.com/pkg/errors"
 	"gopkg.in/birkirb/loggers.v1"
 
@@ -50,15 +51,17 @@ type Config struct {
 
 // Migrator holds service data
 type Migrator struct {
-	Config     *Config
-	Root       string
-	Log        loggers.Contextual
-	FS         FileSystem
-	doRollback bool
-	installed  bool
-	commitLock sync.RWMutex
-	cur        int
-	cnt        int
+	Config      *Config
+	Root        string
+	Log         loggers.Contextual
+	FS          FileSystem
+	IsTerminal  bool
+	doRollback  bool
+	installed   bool
+	commitLock  sync.RWMutex
+	cur         int
+	cnt         int
+	MessageChan chan interface{}
 }
 
 const (
@@ -104,7 +107,13 @@ const (
 
 // New creates an Migrator object
 func New(cfg Config, log loggers.Contextual, fs FileSystem, root string) *Migrator {
-	mig := Migrator{Config: &cfg, Log: log, Root: root}
+	mig := Migrator{
+		Config:      &cfg,
+		Log:         log,
+		Root:        root,
+		IsTerminal:  isatty.IsTerminal(os.Stdout.Fd()),
+		MessageChan: make(chan interface{}),
+	}
 	if fs == nil {
 		mig.FS = defaultFS{}
 	} else {
@@ -178,14 +187,14 @@ func (mig *Migrator) Run(tx pgx.Tx, command string, packages []string) (*bool, e
 		return &rv, errors.Wrap(err, "Check pgmig")
 	}
 
-	fmt.Printf("PgMig exists: %v\n", mig.installed)
+	mig.MessageChan <- &Status{Exists: mig.installed}
 	err = mig.execFiles(tx, files)
 	if err != nil {
 		pgErr, ok := err.(*pgconn.PgError)
 		if !ok {
 			return &rv, errors.Wrap(err, "System error")
 		}
-		printPgError(pgErr)
+		mig.MessageChan <- pgErr
 		return &rv, nil
 	}
 	if mig.noCommit() || mig.Config.NoCommit || command == CmdTest {
@@ -215,7 +224,7 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) (err error) {
 		}
 	}
 	for _, pkg := range pkgs {
-		fmt.Printf("# %s.%s\n", pkg.Name, pkg.Op)
+		mig.MessageChan <- &Op{Pkg: pkg.Name, Op: pkg.Op}
 		var installedVersion string
 		if mig.installed {
 			err = queryValue(tx, &installedVersion, fmt.Sprintf(SQLPkgVersion, CorePackage, mig.Config.PkgVersion), pkg.Name)
@@ -223,7 +232,7 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) (err error) {
 				return
 			}
 			if installedVersion != "" {
-				fmt.Printf("Installed version: %s\n", installedVersion)
+				mig.MessageChan <- &Version{Version: installedVersion}
 			}
 		}
 		pkgExists := (installedVersion != "")
@@ -237,7 +246,8 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) (err error) {
 				if err != nil {
 					return
 				}
-				fmt.Printf("New version:       %s from %s\n", info.Version, info.Repository)
+				mig.MessageChan <- &NewVersion{Version: info.Version, Repo: info.Repository}
+
 			}
 			if !(pkg.Name == CorePackage && pkg.Op == CmdInit && !pkgExists) {
 				// this is not "init" for new CorePackage
@@ -248,7 +258,6 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) (err error) {
 			}
 		}
 		for _, file := range pkg.Files {
-			fmt.Printf("\r# %s ", file.Name)
 			if file.IfNewPkg {
 				if pkgExists {
 					mig.Log.Debugf("Skip file %s/%s because pkg is old", pkg.Name, file.Name)
@@ -289,8 +298,10 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) (err error) {
 				}
 			}
 
-			// TODO: if isTest - вызвать test_before/*set-role; set search_path*/ и test_after /*reset role; set search_path*/
-
+			// TODO: if isTest
+			//  - вызвать test_before/*set-role; set search_path*/ и test_after /*reset role; set search_path*/
+			//  - cur=cnt=0
+			mig.MessageChan <- &RunFile{Name: file.Name}
 			query := string(s)
 			_, err = tx.Exec(ctx, query)
 			if err != nil {
@@ -303,6 +314,7 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) (err error) {
 				pgErr.Line = int32(strings.Count(string([]rune(query)[:pgErr.Position]), "\n") + 1)
 				return pgErr
 			}
+			// TODO: if cur != cnt -> warn
 		}
 
 		if !mig.Config.NoHooks && pkg.Op != CmdTest {
@@ -355,20 +367,23 @@ func (mig *Migrator) lookupFiles(op string, masks []string, initMasks []string, 
 // ProcessNotice receives PG notices with test metadata and plain
 // TODO: add multiprocess support?
 func (mig *Migrator) ProcessNotice(code, message, detail string) {
+	if mig.MessageChan == nil {
+		return
+	}
 	switch code {
 	case pgStatusTestCount:
 		mig.cnt, _ = strconv.Atoi(message)
 		mig.cur = 0
-		fmt.Printf("\n%d..%d\n", 1, mig.cnt)
+		mig.MessageChan <- &TestCount{Count: mig.cnt}
 		//			notices = []pgx.Notice{}
 	case pgStatusTestOk:
 		mig.cur++
-		fmt.Printf("ok %d - %s\n", mig.cur, message)
+		mig.MessageChan <- &TestOk{Current: mig.cur, Message: message}
 		//			notices = []pgx.Notice{}
 	case pgStatusTestFail:
 		mig.cur++
 		// TODO: send to channel {Type:.., Message: []string}
-		fmt.Printf("not ok %d - %s\n  ---\n%s\n  ---", mig.cur, message, detail)
+		mig.MessageChan <- &TestFail{Current: mig.cur, Message: message, Detail: detail}
 		//			if len(notices) > 0 {
 		//				fmt.Println(notices)
 		//			}
@@ -472,7 +487,7 @@ func (mig *Migrator) setVars(tx pgx.Tx) error {
 		if v == "" {
 			continue
 		}
-		fmt.Printf("%s = %s\n", k, v)
+		mig.Log.Debugf("Set var %s = %s\n", k, v)
 		_, err := tx.Exec(ctx, SQLSetVar, varPrefix, k, v)
 		if err != nil {
 			return errors.Wrap(err, "Set_config error")
@@ -484,7 +499,7 @@ func (mig *Migrator) setVars(tx pgx.Tx) error {
 // queryValue fills rv with single valued SQL result if present
 func queryValue(tx pgx.Tx, rv interface{}, sql string, arguments ...interface{}) error {
 	rows, err := tx.Query(context.Background(), sql, arguments...)
-	defer rows.Close()
+	defer func() { rows.Close() }()
 	if err != nil {
 		return err
 	}
@@ -503,22 +518,5 @@ func SliceReverse(pkgs []string) {
 	for i := len(pkgs)/2 - 1; i >= 0; i-- {
 		opp := len(pkgs) - 1 - i
 		pkgs[i], pkgs[opp] = pkgs[opp], pkgs[i]
-	}
-}
-
-// printPgError print Pg error struct
-func printPgError(e *pgconn.PgError) {
-	fmt.Printf("#  %s:%d %s %s %s\n", e.File, e.Line, e.Severity, e.Code, e.Message)
-	if e.Detail != "" {
-		fmt.Println("#  Detail: " + e.Detail)
-	}
-	if e.Hint != "" {
-		fmt.Println("#  Hint: " + e.Hint)
-	}
-	if e.Where != "" {
-		fmt.Println("#  Where: " + e.Where)
-	}
-	if e.InternalQuery != "" {
-		fmt.Println("#  Query: " + e.InternalQuery)
 	}
 }

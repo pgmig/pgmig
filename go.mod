@@ -11,6 +11,7 @@ require (
 	github.com/jackc/pgproto3/v2 v2.0.0
 	github.com/jackc/pgx/v4 v4.1.2
 	github.com/jessevdk/go-flags v1.4.0
+	github.com/mattn/go-isatty v0.0.9
 	github.com/pgmig/gitinfo v0.11.3
 	github.com/pkg/errors v0.8.1
 	github.com/shopspring/decimal v0.0.0-20191130220710-360f2bc03045 // indirect
@@ -18,6 +19,7 @@ require (
 	github.com/stretchr/testify v1.4.0
 	golang.org/x/crypto v0.0.0-20191206172530-e9b2fee46413 // indirect
 	golang.org/x/sys v0.0.0-20191210023423-ac6580df4449 // indirect
+	golang.org/x/xerrors v0.0.0-20191011141410-1b5146add898 // indirect
 	gopkg.in/birkirb/loggers.v1 v1.1.0
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 )
