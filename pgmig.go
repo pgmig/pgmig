@@ -21,6 +21,8 @@ import (
 	"github.com/pgmig/gitinfo"
 )
 
+// codebeat:disable[TOO_MANY_IVARS]
+
 // Config holds all config vars
 type Config struct {
 	Vars       map[string]string `long:"var" description:"Transaction variable(s)"`
@@ -63,6 +65,8 @@ type Migrator struct {
 	cnt         int
 	MessageChan chan interface{}
 }
+
+// codebeat:enable[TOO_MANY_IVARS]
 
 const (
 	// CmdInit holds name of init command
@@ -264,56 +268,7 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) (err error) {
 					continue
 				}
 			}
-			f := filepath.Join(pkg.Root, file.Name)
-			fh, err := mig.FS.Open(f)
-			if err != nil {
-				return errors.Wrap(err, "Open "+f)
-			}
-			defer fh.Close()
-
-			s, err := ioutil.ReadAll(fh)
-			if err != nil {
-				return errors.Wrap(err, "Reading "+f)
-			}
-
-			if file.IfNewFile {
-				var md5Old *string
-				err := queryValue(tx, &md5Old, fmt.Sprintf(SQLScriptProtected, CorePackage, mig.Config.ScriptProtected),
-					pkg.Name, file.Name)
-				if err != nil {
-					return errors.Wrap(err, "SQLScriptProtected")
-				}
-				md5New := fmt.Sprintf("%x", md5.Sum(s))
-				if md5Old != nil {
-					mig.Log.Debugf("Skip file %s/%s because it is loaded already", pkg.Name, file.Name)
-					if *md5Old != md5New {
-						mig.Log.Warnf("Warning md5 changed for %s:%s from %s to %s", pkg.Name, file.Name, *md5Old, md5New)
-					}
-					continue
-				}
-				_, err = tx.Exec(ctx, fmt.Sprintf(SQLScriptProtect, CorePackage, mig.Config.ScriptProtect),
-					pkg.Name, file.Name, md5New)
-				if err != nil {
-					return errors.Wrap(err, "SQLScriptProtect")
-				}
-			}
-
-			// TODO: if isTest
-			//  - вызвать test_before/*set-role; set search_path*/ и test_after /*reset role; set search_path*/
-			//  - cur=cnt=0
-			mig.MessageChan <- &RunFile{Name: file.Name}
-			query := string(s)
-			_, err = tx.Exec(ctx, query)
-			if err != nil {
-				pgErr, ok := err.(*pgconn.PgError)
-				if !ok {
-					return errors.Wrap(err, "System error")
-				}
-				// PG does not know about file. Set it and calc lime no
-				pgErr.File = file.Name
-				pgErr.Line = int32(strings.Count(string([]rune(query)[:pgErr.Position]), "\n") + 1)
-				return pgErr
-			}
+			err = mig.execFile(tx, pkg.Root, pkg.Name, file)
 			// TODO: if cur != cnt -> warn
 		}
 
@@ -328,6 +283,61 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) (err error) {
 				mig.Log.Debug("pgmig is not installed now")
 			}
 		}
+	}
+	return nil
+}
+
+func (mig *Migrator) execFile(tx pgx.Tx, pkgRoot, pkgName string, file fileDef) error {
+	f := filepath.Join(pkgRoot, file.Name)
+	fh, err := mig.FS.Open(f)
+	if err != nil {
+		return errors.Wrap(err, "Open "+f)
+	}
+	defer fh.Close()
+
+	s, err := ioutil.ReadAll(fh)
+	if err != nil {
+		return errors.Wrap(err, "Reading "+f)
+	}
+
+	ctx := context.Background()
+	if file.IfNewFile {
+		var md5Old *string
+		err := queryValue(tx, &md5Old, fmt.Sprintf(SQLScriptProtected, CorePackage, mig.Config.ScriptProtected),
+			pkgName, file.Name)
+		if err != nil {
+			return errors.Wrap(err, "SQLScriptProtected")
+		}
+		md5New := fmt.Sprintf("%x", md5.Sum(s))
+		if md5Old != nil {
+			mig.Log.Debugf("Skip file %s/%s because it is loaded already", pkgName, file.Name)
+			if *md5Old != md5New {
+				mig.Log.Warnf("Warning md5 changed for %s:%s from %s to %s", pkgName, file.Name, *md5Old, md5New)
+			}
+			return nil
+		}
+		_, err = tx.Exec(ctx, fmt.Sprintf(SQLScriptProtect, CorePackage, mig.Config.ScriptProtect),
+			pkgName, file.Name, md5New)
+		if err != nil {
+			return errors.Wrap(err, "SQLScriptProtect")
+		}
+	}
+
+	// TODO: if isTest
+	//  - вызвать test_before/*set-role; set search_path*/ и test_after /*reset role; set search_path*/
+	//  - cur=cnt=0
+	mig.MessageChan <- &RunFile{Name: file.Name}
+	query := string(s)
+	_, err = tx.Exec(ctx, query)
+	if err != nil {
+		pgErr, ok := err.(*pgconn.PgError)
+		if !ok {
+			return errors.Wrap(err, "System error")
+		}
+		// PG does not know about file. Set it and calc lime no
+		pgErr.File = file.Name
+		pgErr.Line = int32(strings.Count(string([]rune(query)[:pgErr.Position]), "\n") + 1)
+		return pgErr
 	}
 	return nil
 }
