@@ -93,7 +93,7 @@ const (
 	pgStatusTestOk    = "01999"
 	pgStatusTestFail  = "02999"
 
-	// SQLPgMigExists is a query to check pgmig.pkg table presense
+	// SQLPgMigExists is a query to check pgmig.pkg table presence
 	SQLPgMigExists = "SELECT true FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2"
 	// SQLPgMigVar gets Pg config var
 	SQLPgMigVar = "SELECT current_setting($1, true)"
