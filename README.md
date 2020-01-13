@@ -4,11 +4,14 @@ postgresql migration library &amp; tool
 
 [![GoDoc][gd1]][gd2]
  [![codecov][cc1]][cc2]
- [![Build Status][bs1]][bs2]
+ [![drone.io build status][bs1]][bs2]
+ [![codebeat badge][cb1]][cb2]
  [![GoCard][gc1]][gc2]
  [![GitHub Release][gr1]][gr2]
  [![GitHub license][gl1]][gl2]
 
+[cb1]: https://codebeat.co/badges/4f5f1a84-01ac-4c41-a257-62e2216f1428
+[cb2]: https://codebeat.co/projects/github-com-pgmig-pgmig-master
 [bs1]: https://cloud.drone.io/api/badges/pgmig/pgmig/status.svg
 [bs2]: https://cloud.drone.io/pgmig/pgmig
 [cc1]: https://codecov.io/gh/pgmig/pgmig/branch/master/graph/badge.svg
