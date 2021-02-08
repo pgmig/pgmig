@@ -7,37 +7,49 @@ import (
 	"github.com/jackc/pgconn"
 )
 
+// Status holds Status message fields.
 type Status struct {
 	Exists bool
 }
 
-//	type pgErr
+// Op holds Op message fields.
 type Op struct {
 	Pkg string
 	Op  string
 }
+
+// Version holds version message fields.
 type Version struct{ Version string }
+
+// NewVersion holds new version message fields.
 type NewVersion struct {
 	Version string
 	Repo    string
 }
+
+// RunFile holds run file message fields.
 type RunFile struct{ Name string }
+
+// TestCount holds test count message fields.
 type TestCount struct{ Count int }
+
+// TestOk holds fields of successfull test results.
 type TestOk struct {
 	Current int
 	Message string
 }
+
+// TestFail holds fields of unsuccessfull test fields.
 type TestFail struct {
 	Current int
 	Message string
 	Detail  string
 }
 
+// PrintMessages prints messages from SQL functions
 func (mig *Migrator) PrintMessages(wg *sync.WaitGroup) {
-
 	yellow, green, red, end := colors(mig.IsTerminal)
 	for m := range mig.MessageChan {
-
 		switch v := m.(type) {
 		case *Status:
 			fmt.Printf("PgMig exists: %v\n", v.Exists)
@@ -65,7 +77,7 @@ func (mig *Migrator) PrintMessages(wg *sync.WaitGroup) {
 			fmt.Printf(">> %T\n", m)
 		}
 	}
-	mig.Log.Debug("MessageChan closed")
+	mig.Log.V(1).Info("MessageChan closed")
 	wg.Done()
 }
 
@@ -76,7 +88,7 @@ func colors(isTerm bool) (string, string, string, string) {
 	return "", "", "", ""
 }
 
-// printPgError print Pg error struct
+// printPgError prints Pg error struct
 func printPgError(e *pgconn.PgError) {
 	fmt.Printf("#  %s:%d %s %s %s\n", e.File, e.Line, e.Severity, e.Code, e.Message)
 	if e.Detail != "" {

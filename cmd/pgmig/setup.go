@@ -3,29 +3,21 @@ package main
 import (
 	"errors"
 
+	"github.com/go-logr/logr"
+	"github.com/go-logr/zapr"
+	"github.com/mattn/go-colorable"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+
 	"github.com/jessevdk/go-flags"
-
-	mapper "github.com/birkirb/loggers-mapper-logrus"
-	"github.com/sirupsen/logrus"
-	"gopkg.in/birkirb/loggers.v1"
-
-	"github.com/pgmig/pgmig"
 )
 
-// Config holds all config vars
-type Config struct {
-	DSN     string `long:"dsn" default:"" description:"Database URL"`
-	Verbose bool   `long:"verbose" description:"Show debug data"`
-	Args    struct {
-		//nolint:staticcheck // Multiple struct tag "choice" is allowed
-		Command  string   `choice:"init" choice:"test" choice:"drop" choice:"erase" choice:"reinit" description:"init|test|drop|erase|reinit"`
-		Packages []string `description:"dirnames under SQL sources directory in create order"`
-	} `positional-args:"yes" required:"yes"`
-	Mig pgmig.Config `group:"Migrator Options" namespace:"mig"`
+// -----------------------------------------------------------------------------
 
-	// SQL packages root. Not used with embedded fs
-	// SQLRoot        string            `long:"sql" default:"sql" description:"SQL sources directory"` // TODO: pkg/*/sql
-
+// Flags defines local application flags
+type Flags struct {
+	Version bool `long:"version"                       description:"Show version and exit"`
+	Debug   bool `long:"debug"                         description:"Show debug data"`
 }
 
 var (
@@ -35,10 +27,11 @@ var (
 	ErrBadArgs = errors.New("option error printed")
 )
 
-// setupConfig loads flags from args (if given) or command flags and ENV otherwise
-func setupConfig(args ...string) (*Config, error) {
+// SetupConfig loads flags from args (if given) or command flags and ENV otherwise
+func SetupConfig(args ...string) (*Config, error) {
 	cfg := &Config{}
 	p := flags.NewParser(cfg, flags.Default) //  HelpFlag | PrintErrors | PassDoubleDash
+
 	var err error
 	if len(args) == 0 {
 		_, err = p.Parse()
@@ -46,7 +39,6 @@ func setupConfig(args ...string) (*Config, error) {
 		_, err = p.ParseArgs(args)
 	}
 	if err != nil {
-		//fmt.Printf("Args error: %#v", err)
 		if e, ok := err.(*flags.Error); ok && e.Type == flags.ErrHelp {
 			return nil, ErrGotHelp
 		}
@@ -55,14 +47,42 @@ func setupConfig(args ...string) (*Config, error) {
 	return cfg, nil
 }
 
-// setupLog creates logger
-func setupLog(cfg *Config) loggers.Contextual {
-	l := logrus.New()
-	if cfg.Verbose {
-		l.SetLevel(logrus.DebugLevel)
-		//	l.SetReportCaller(true)
+// SetupLog creates logger
+func SetupLog(withDebug bool, opts ...zap.Option) logr.Logger {
+	var log logr.Logger
+	if withDebug {
+		aa := zap.NewDevelopmentEncoderConfig()
+		zo := append(opts, zap.AddCaller())
+		aa.EncodeLevel = zapcore.CapitalColorLevelEncoder
+		zapLog := zap.New(zapcore.NewCore(
+			zapcore.NewConsoleEncoder(aa),
+			zapcore.AddSync(colorable.NewColorableStdout()),
+			zapcore.DebugLevel,
+		),
+			zo...,
+		)
+		log = zapr.NewLogger(zapLog)
 	} else {
-		l.SetLevel(logrus.WarnLevel)
+		zc := zap.NewProductionConfig()
+		zapLog, _ := zc.Build(opts...)
+		log = zapr.NewLogger(zapLog)
 	}
-	return &mapper.Logger{Logger: l} // Same as mapper.NewLogger(l) but without info log message
+	return log
+}
+
+// Shutdown runs exit after deferred cleanups have run
+func Shutdown(exitFunc func(code int), e error, log logr.Logger) {
+	if e != nil {
+		var code int
+		switch e {
+		case ErrGotHelp:
+			code = 3
+		case ErrBadArgs:
+			code = 2
+		default:
+			log.Error(e, "Run error")
+			code = 1
+		}
+		exitFunc(code)
+	}
 }

@@ -2,20 +2,22 @@ package pgmig
 
 import (
 	//"os"
-	"github.com/stretchr/testify/assert"
+	"fmt"
+	"os"
 	"sync"
 	"testing"
 
-	mapper "github.com/birkirb/loggers-mapper-logrus"
+	"github.com/stretchr/testify/assert"
+	"github.com/wojas/genericr"
+
 	"github.com/jackc/pgconn"
-	"github.com/sirupsen/logrus/hooks/test"
 )
 
-func ExamplePrintMessages() {
-
-	l, _ := test.NewNullLogger()
-	log := mapper.NewLogger(l)
-	mig := New(Config{}, log, nil, "")
+func ExampleMigrator_PrintMessages() {
+	log := genericr.New(func(e genericr.Entry) {
+		fmt.Fprintln(os.Stderr, e.String())
+	})
+	mig := New(log, Config{}, nil, "")
 	mig.IsTerminal = false
 	mig.MessageChan = make(chan interface{}, 50)
 
@@ -72,7 +74,6 @@ func ExamplePrintMessages() {
 }
 
 func TestColors(t *testing.T) {
-
 	a, b, c, d := colors(true)
 	got := []string{a, b, c, d}
 	assert.Equal(t, []string{"\x1b[33m", "\x1b[32m", "\x1b[31m", "\x1b[m"}, got)

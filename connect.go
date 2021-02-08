@@ -8,7 +8,7 @@ import (
 )
 
 // Connect makes connect to DB and returns ins handle
-func (mig *Migrator) Connect(dsn string) (*pgx.Conn, error) {
+func (mig *Migrator) Connect(ctx context.Context, dsn string) (*pgx.Conn, error) {
 	config, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return nil, err
@@ -20,6 +20,5 @@ func (mig *Migrator) Connect(dsn string) (*pgx.Conn, error) {
 
 	// TODO: statement_cache_mode = "describe"
 	config.BuildStatementCache = nil // disable stmt cache for `reinit pgmig`
-	ctx := context.Background()
 	return pgx.ConnectConfig(ctx, config)
 }

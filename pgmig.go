@@ -12,11 +12,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/go-logr/logr"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/mattn/go-isatty"
 	"github.com/pkg/errors"
-	"gopkg.in/birkirb/loggers.v1"
 
 	"github.com/pgmig/gitinfo"
 )
@@ -27,9 +27,11 @@ import (
 type Config struct {
 	Vars       map[string]string `long:"var" description:"Transaction variable(s)"`
 	VarsPrefix string            `long:"var_prefix" default:"pgmig.var." description:"Transaction variable(s) prefix"`
-	NoCommit   bool              `long:"nocommit" description:"Do not commit work"`
-	ListOnly   bool              `long:"listonly" description:"Show file list and exit"`
-	Debug      bool              `long:"debug" description:"Print debug info"` // TODO: process
+	//Command string default check
+	NoCommit bool `long:"nocommit" description:"Do not commit work"`
+	ListOnly bool `long:"listonly" description:"Show file list and exit"` // TODO: --dry-run
+	Debug    bool `long:"debug" description:"Print debug info"`           // TODO: process
+	Quiet    bool `short:"q" long:"quiet" description:"Do not show messages from DB"`
 
 	// TODO: SearchPath?
 
@@ -55,7 +57,7 @@ type Config struct {
 type Migrator struct {
 	Config      *Config
 	Root        string
-	Log         loggers.Contextual
+	Log         logr.Logger
 	FS          FileSystem
 	IsTerminal  bool
 	doRollback  bool
@@ -69,6 +71,8 @@ type Migrator struct {
 // codebeat:enable[TOO_MANY_IVARS]
 
 const (
+	// CmdCheck holds name of check command
+	CmdCheck = "check"
 	// CmdInit holds name of init command
 	CmdInit = "init"
 	// CmdTest holds name of test command
@@ -80,7 +84,7 @@ const (
 	// CmdReInit holds name of reinit (drop+init) command
 	CmdReInit = "reinit"
 	// CmdList holds name of list command
-	CmdList = "list" // TODO
+	// CmdList = "list" // TODO
 
 	// CorePackage is the name of pgmig core package
 	CorePackage = "pgmig"
@@ -110,7 +114,7 @@ const (
 )
 
 // New creates an Migrator object
-func New(cfg Config, log loggers.Contextual, fs FileSystem, root string) *Migrator {
+func New(log logr.Logger, cfg Config, fs FileSystem, root string) *Migrator {
 	mig := Migrator{
 		Config:      &cfg,
 		Log:         log,
@@ -123,7 +127,7 @@ func New(cfg Config, log loggers.Contextual, fs FileSystem, root string) *Migrat
 	} else {
 		mig.FS = fs
 	}
-	mig.Log.Debugf("CFG: %#v\n", cfg)
+	mig.Log.V(1).Info("CFG", "cfg", cfg)
 	return &mig
 }
 
@@ -177,7 +181,7 @@ func (mig *Migrator) Run(tx pgx.Tx, command string, packages []string) (*bool, e
 		return &rv, err
 	}
 	if len(files) == 0 {
-		mig.Log.Warn("No files found")
+		mig.Log.Info("No files found")
 		return &rv, nil
 	}
 	if cfg.ListOnly {
@@ -246,7 +250,7 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) (err error) {
 		if !mig.Config.NoHooks && pkg.Op == CmdInit {
 			// hooks enabled
 			if pkg.Op == CmdInit {
-				info, err = gitinfo.New(mig.Config.GitInfo).ReadOrMake(gitinfoFileSystem{mig.FS}, pkg.Root)
+				info, err = gitinfo.New(mig.Log, mig.Config.GitInfo).ReadOrMake(gitinfoFileSystem{mig.FS}, pkg.Root)
 				if err != nil {
 					return
 				}
@@ -264,7 +268,7 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) (err error) {
 		for _, file := range pkg.Files {
 			if file.IfNewPkg {
 				if pkgExists {
-					mig.Log.Debugf("Skip file %s/%s because pkg is old", pkg.Name, file.Name)
+					mig.Log.V(1).Info("Skip file because pkg is old", "file", pkg.Name+"/"+file.Name)
 					continue
 				}
 			}
@@ -280,7 +284,7 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) (err error) {
 			}
 			if pkg.Name == CorePackage && (pkg.Op == CmdDrop || pkg.Op == CmdErase) {
 				mig.installed = false
-				mig.Log.Debug("pgmig is not installed now")
+				mig.Log.Info("pgmig is not installed now")
 			}
 		}
 	}
@@ -310,9 +314,9 @@ func (mig *Migrator) execFile(tx pgx.Tx, pkgRoot, pkgName string, file fileDef) 
 		}
 		md5New := fmt.Sprintf("%x", md5.Sum(s))
 		if md5Old != nil {
-			mig.Log.Debugf("Skip file %s/%s because it is loaded already", pkgName, file.Name)
+			mig.Log.V(1).Info("Skip file because it is loaded already", "file", pkgName+"/"+file.Name)
 			if *md5Old != md5New {
-				mig.Log.Warnf("Warning md5 changed for %s:%s from %s to %s", pkgName, file.Name, *md5Old, md5New)
+				mig.Log.Info("Warning md5 changed", "file", pkgName+"/"+file.Name, "md5Old", *md5Old, "md5New", md5New)
 			}
 			return nil
 		}
@@ -347,7 +351,7 @@ func (mig *Migrator) lookupFiles(op string, masks []string, initMasks []string, 
 	pkgs := append(packages[:0:0], packages...) // Copy slice. See https://github.com/go101/go101/wiki
 	if isReverse {
 		SliceReverse(pkgs)
-		mig.Log.Debugf("Packages: %#v", pkgs)
+		mig.Log.Info("Packages", "packages", pkgs)
 	}
 	for _, pkg := range pkgs {
 		root := filepath.Join(mig.Root, pkg)
@@ -356,19 +360,19 @@ func (mig *Migrator) lookupFiles(op string, masks []string, initMasks []string, 
 			rv = append(rv, pkgDef{Name: pkg, Op: op, Root: root, Files: files})
 			continue
 		}
-		mig.Log.Debugf("Looking in %s for %v", pkg, masks)
+		mig.Log.V(1).Info("Looking in pkg for masks", "pkg", pkg, "masks", masks)
 		err = mig.FS.Walk(root, mig.walkerFunc(masks, initMasks, onceMasks, &files))
 		if err != nil {
 			return rv, errors.Wrap(err, "Walk error")
 		}
 		if len(files) > 0 {
-			mig.Log.Debugf("Found %d file(s)", len(files))
+			mig.Log.V(1).Info("Found file(s)", "count", len(files))
 			sort.Slice(files, func(i, j int) bool {
 				return files[i].Name < files[j].Name
 			})
 			rv = append(rv, pkgDef{Name: pkg, Op: op, Root: root, Files: files})
 		} else {
-			mig.Log.Warnf("Package %s does not contain %v", pkg, masks)
+			mig.Log.Info("Package pkg does not contain", "pkg", pkg, "masks", masks)
 		}
 	}
 	return
@@ -401,10 +405,10 @@ func (mig *Migrator) ProcessNotice(code, message, detail string) {
 		mig.setNoCommit(true)
 	default:
 		//	notices = append(notices, *n)
-		mig.Log.Infof("%s: %s\n", code, message)
+		mig.Log.V(1).Info("Result", "code", code, "message", message)
 	}
 	if mig.cur > mig.cnt && (code == pgStatusTestOk || code == pgStatusTestFail) {
-		mig.Log.Warnf("Wrong tests count: test %d total %d", mig.cur, mig.cnt)
+		mig.Log.Info("Wrong tests count", "got", mig.cur, "want", mig.cnt)
 	}
 }
 
@@ -480,7 +484,7 @@ func (mig *Migrator) noCommit() bool {
 
 func (mig *Migrator) setVars(tx pgx.Tx) error {
 	ctx := context.Background()
-	mig.Log.Debugf("Setting vars %#v\n", mig.Config.Vars)
+	mig.Log.V(1).Info("Setting vars", "vars", mig.Config.Vars)
 	var varPrefix *string // pgx.NullString
 	err := queryValue(tx, &varPrefix, SQLPgMigVar, CorePrefix)
 	if err != nil {
@@ -497,7 +501,7 @@ func (mig *Migrator) setVars(tx pgx.Tx) error {
 		if v == "" {
 			continue
 		}
-		mig.Log.Debugf("Set var %s = %s\n", k, v)
+		mig.Log.V(1).Info("Set var", "name", k, "value", v)
 		_, err := tx.Exec(ctx, SQLSetVar, varPrefix, k, v)
 		if err != nil {
 			return errors.Wrap(err, "Set_config error")

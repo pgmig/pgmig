@@ -1,0 +1,23 @@
+version: '2.1'
+
+services:
+
+  app:
+    image: ${DOCKER_IMAGE}
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    build:
+      context: .
+      args:
+        - GOLANG_VERSION
+
+  pg:
+    image: postgres:13.1-alpine
+    ports:
+      - ${PGPORT}:5432
+    environment:
+      - POSTGRES_USER=${PGUSER}
+      - POSTGRES_PASSWORD=${PGPASSWORD}
+      - POSTGRES_DB=${PGDATABASE}
+    stop_signal: SIGINT

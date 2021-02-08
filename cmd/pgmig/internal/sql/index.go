@@ -646,7 +646,7 @@ var didx = make(map[string]*directoryAsset)
 var stamp time.Time
 
 func init() {
-	stamp = time.Unix(1577585030, 701415162)
+	stamp = time.Unix(1612819781, 447351040)
 	bb := blob_bytes(48744)
 	bs := blob_string(48744)
 	root = &directoryAsset{

@@ -6,28 +6,27 @@ import (
 	"context"
 	"crypto/md5"
 	"fmt"
-	"github.com/golang/mock/gomock"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/golang/mock/gomock"
+	"github.com/wojas/genericr"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	mapper "github.com/birkirb/loggers-mapper-logrus"
 	"github.com/jessevdk/go-flags"
-	"github.com/sirupsen/logrus"
-	"github.com/sirupsen/logrus/hooks/test"
 
 	"github.com/jackc/pgconn"
 )
 
 type ServerSuite struct {
 	suite.Suite
-	cfg  Config
-	srv  *Migrator
-	hook *test.Hook
+	cfg Config
+	srv *Migrator
 }
 
 var (
@@ -41,17 +40,17 @@ func (ss *ServerSuite) SetupSuite() {
 	_, err := p.Parse()
 	require.NoError(ss.T(), err)
 
-	l, hook := test.NewNullLogger()
-	ss.hook = hook
-	l.SetLevel(logrus.DebugLevel)
-	log := mapper.NewLogger(l)
-
-	hook.Reset()
+	log := genericr.New(func(e genericr.Entry) {
+		ss.T().Log(e.String())
+	})
 
 	ctrl := gomock.NewController(ss.T())
 	defer ctrl.Finish()
-
-	ss.srv = New(ss.cfg, log, defaultFS{}, "testdata")
+	v := os.Getenv("VERSION")
+	if v != "" {
+		version = v
+	}
+	ss.srv = New(log, ss.cfg, defaultFS{}, "testdata")
 }
 
 func TestSuite(t *testing.T) {
@@ -107,7 +106,7 @@ func (ss *ServerSuite) TestRun() {
 	want := []interface{}{
 		&Status{Exists: false},
 		&Op{Pkg: "a", Op: "init"},
-		&NewVersion{Version: "loaded from git in SetupSuite", Repo: "git@github.com:pgmig/pgmig.git"},
+		&NewVersion{Version: version, Repo: "git@github.com:pgmig/pgmig.git"},
 		&RunFile{Name: "00_init.sql"},
 		&RunFile{Name: "01_ddl.sql"},
 		&RunFile{Name: "02_ddl.test.sql"},
@@ -116,12 +115,6 @@ func (ss *ServerSuite) TestRun() {
 	}
 	assert.Equal(ss.T(), got, want)
 
-}
-
-func (ss *ServerSuite) printLogs() {
-	for _, e := range ss.hook.Entries {
-		fmt.Printf("ENT[%s]: %s\n", e.Level, e.Message)
-	}
 }
 
 func content(t *testing.T, mig *Migrator, file string) []byte {

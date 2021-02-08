@@ -2,23 +2,21 @@ package pgmig
 
 import (
 	//"os"
-	"github.com/stretchr/testify/assert"
+	"context"
 	"testing"
 
-	mapper "github.com/birkirb/loggers-mapper-logrus"
-	"github.com/sirupsen/logrus/hooks/test"
+	"github.com/stretchr/testify/assert"
+	"github.com/wojas/genericr"
 )
 
 func TestConnect(t *testing.T) {
 
 	dsn := "postgres://jack:secret@localhost:2/mydb"
-
-	l, _ := test.NewNullLogger()
-	log := mapper.NewLogger(l)
-	mig := New(Config{}, log, nil, "")
-
-	_, err := mig.Connect("unknown")
-	assert.NotNil(t, err)
-	_, err = mig.Connect(dsn)
+	log := genericr.New(func(e genericr.Entry) {
+		//t.Log(e.String())
+	})
+	mig := New(log, Config{}, nil, "")
+	ctx := context.Background()
+	_, err := mig.Connect(ctx, dsn)
 	assert.NotNil(t, err)
 }

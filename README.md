@@ -1,6 +1,6 @@
 # pgmig
-postgresql migration library &amp; tool
 
+> postgresql migration library &amp; tool
 
 [![GoDoc][gd1]][gd2]
  [![codecov][cc1]][cc2]
@@ -44,3 +44,8 @@ Because I didn't find another lib which supports UnionFS, ie checks OS filesyste
 * [ ] tests
 * [ ] docs
 
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE).
+
+Copyright (c) 2019-2021 Aleksey Kovrizhkin <lekovr+pgmig@gmail.com>

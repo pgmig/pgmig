@@ -1,66 +1,58 @@
+## pgmig Makefile:
+## Postgresql "drop/create" migrations
+#:
 
-SHELL          = /bin/bash
-CFG            = .env
-
+SHELL          = /bin/sh
+CFG           ?= .env
 PRG           ?= $(shell basename $$PWD)
-
 PKGS          ?= pgmig
 
 # -----------------------------------------------------------------------------
 # Build config
 
 GO            ?= go
-VERSION       ?= $(shell git describe --tags)
-SOURCES       ?= cmd/*/*.go *.go
+SOURCES        = $(shell find . -maxdepth 3 -mindepth 1 -name '*.go'  -printf '%p\n')
+APP_VERSION   ?= $(shell git describe --tags --always)
+GOLANG_VERSION = 1.15.5-alpine3.12
 
 OS            ?= linux
 ARCH          ?= amd64
-STAMP         ?= $$(date +%Y-%m-%d_%H:%M.%S)
 ALLARCH       ?= "linux/amd64 linux/386 darwin/386 windows/amd64"
 DIRDIST       ?= dist
+
+# Path to golang package docs
+GODOC_REPO    ?= github.com/$(PRG)/$(PRG)
+# Path to docker image registry
+DOCKER_IMAGE  ?= ghcr.io/$(PRG)/$(PRG)
 
 # -----------------------------------------------------------------------------
 # Docker image config
 
-# application name, docker-compose prefix
-PROJECT_NAME  ?= $(PRG)
-
 # Hardcoded in docker-compose.yml service name
 DC_SERVICE    ?= app
 
-# Generated docker image
-DC_IMAGE      ?= $(PRG)
-
 # docker/compose version
-DC_VER        ?= 1.23.2
-
-# golang image version
-GO_VER        ?= 1.12.6
+DC_VER        ?= latest
 
 # docker app for change inside containers
 DOCKER_BIN    ?= docker
-
-# Postgresql container name
-PG_CONTAINER  ?= dcape_db_1
-# Postgresql container network
-PG_NETWORK    ?= dcape_net
 
 # -----------------------------------------------------------------------------
 # Runtime data
 
 # DB name
-PGDATABASE    ?= $(PRG)
+PGDATABASE    ?= $(PRG)_test
 # DB user who owns created objects
 PGUSER        ?= $(PRG)_adm
 # DB user password
-PGPASSWORD    ?= $(shell < /dev/urandom tr -dc A-Za-z0-9 | head -c14; echo)
+PGPASSWORD    ?= pgmigtestingpass
 # DB role for tests run (if given)
 PGMIG_TEST_ROLE ?=
 
 # DB host
 PGHOST        ?= localhost
 # DB port
-PGPORT        ?= 5432
+PGPORT        ?= 35432
 # connect via SSL
 PGSSLMODE     ?= disable
 # Client name inside database
@@ -105,51 +97,12 @@ export
 
 .PHONY: all gen doc build-standalone coverage cov-html build test lint fmt vet vendor up down build-docker clean-docker
 
-##
-## Available make targets
-##
-
 # default: show target list
 all: help
 
 # ------------------------------------------------------------------------------
-## Sources
-
-## Run from sources
-run:
-	$(GO) run ./cmd/$(PRG)/ init $(PKGS)
-
-run-%:
-	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
-	$(GO) run -ldflags "-X main.version=$(VERSION)" ./cmd/$(PRG)/ $$opts $* $(PKGS)
-
-vrun-%:
-	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
-	$(GO) run ./cmd/$(PRG)/ $$opts --verbose $* $(PKGS)
-
-cmd-%: build
-	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
-	./$(PRG) $$opts $* $(PKGS)
-
-vcmd-%: build
-	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
-	./$(PRG) $$opts --verbose $* $(PKGS)
-
-#	$(GO) run ./cmd/$(PRG)/ --verbose --mig.var=test_role:$(PGMIG_TEST_ROLE) $* $(PKGS)
-
-run-list-%:
-	@$(GO) run ./cmd/$(PRG)/ --verbose --mig.listonly $* $(PKGS)
-
-## Build app with checks
-build-all: lint lint-more vet cov build
-
-## Build app
-build: gen
-	go build -ldflags "-X main.version=$(VERSION)" ./cmd/$(PRG)
-
-## Build app used in docker from scratch
-build-standalone: cov vet lint lint-more
-	CGO_ENABLED=0 GOOS=linux go build -ldflags "-X main.version=`git describe --tags`" -installsuffix 'static' -a ./cmd/$(PRG)
+## Compile operations
+#:
 
 ## Generate mocks
 gen:
@@ -163,28 +116,70 @@ fmt:
 vet:
 	$(GO) vet ./...
 
-## Run linter
+## run linters
 lint:
 	golint ./...
-
-## Run more linters
-lint-more:
 	golangci-lint run ./...
 
 ## Run tests and fill coverage.out
-cov: coverage.out
+test: coverage.out
 
 # internal target
 coverage.out: $(SOURCES)
-	$(GO) test -test.v -test.race -coverprofile=$@ -covermode=atomic -tags test ./...
+	VERSION=$(APP_VERSION) $(GO) test -tags test -race -covermode=atomic -coverprofile=$@ ./...
+
+## run tests that use services from docker-compose.yml
+test-docker: up-pg test-d down-pg
+
+test-d: export TEST_DSN_PG=postgres://
+test-d: coverage.out
+
+#pgmig:secret@localhost:$(TEST_PG_PORT)/pgmig_test?sslmode=disable
+
+up-pg: CMD=up -d pg
+up-pg: dc
+
+down-pg:
+	@$(MAKE) -s down
 
 ## Open coverage report in browser
-cov-html: cov
+cov-html: coverage.out
 	$(GO) tool cover -html=coverage.out
 
-## Clean coverage report
-cov-clean:
-	rm -f coverage.*
+## Build app
+build: gen $(PRG)
+
+$(PRG): $(SOURCES)
+	GOOS=$(OS) GOARCH=$(ARCH) $(GO) build -v -o $@ -ldflags \
+	  "-X main.version=$(APP_VERSION)" ./cmd/$@
+
+## Build app used in docker from scratch
+build-standalone: vet lint test
+	GOOS=linux CGO_ENABLED=0 $(GO) build -a -v -o $(PRG) -ldflags \
+	  "-X main.version=$(APP_VERSION)" ./cmd/$(PRG)
+
+## run from sources
+run:
+	$(GO) run ./cmd/$(PRG) --debug init $(PKGS)
+
+run-%:
+	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
+	$(GO) run -ldflags "-X main.version=$(VERSION)" ./cmd/$(PRG)/ $$opts $* $(PKGS)
+
+vrun-%:
+	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
+	$(GO) run ./cmd/$(PRG)/ $$opts --debug $* $(PKGS)
+
+cmd-%: build
+	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
+	./$(PRG) $$opts $* $(PKGS)
+
+vcmd-%: build
+	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
+	./$(PRG) $$opts --verbose $* $(PKGS)
+
+run-list-%:
+	@$(GO) run ./cmd/$(PRG)/ --verbose --mig.listonly $* $(PKGS)
 
 # ------------------------------------------------------------------------------
 ## build app for all platforms
@@ -193,7 +188,7 @@ buildall:
 	@[ -d .git ] && GH=`git describe --tags` || GH=nogit ; \
 for a in "$(ALLARCH)" ; do \
   echo "** $${a%/*} $${a#*/}" ; \
-  P=$(PRG)_$${a%/*}_$${a#*/} ; \
+  P=$(PRG)-$${a%/*}_$${a#*/} ; \
   [ "$${a%/*}" == "windows" ] && P=$$P.exe ; \
   GOOS=$${a%/*} GOARCH=$${a#*/} go build -o $$P -ldflags \
   "-X main.version=$$GH" ./cmd/$(PRG) ; \
@@ -207,24 +202,64 @@ dist: clean buildall
 sha256sum $(PRG)* > $(DIRDIST)/SHA256SUMS ; \
 for a in "$(ALLARCH)" ; do \
   echo "** $${a%/*} $${a#*/}" ; \
-  P=$(PRG)_$${a%/*}_$${a#*/} ; \
+  P=$(PRG)-$${a%/*}_$${a#*/} ; \
   [ "$${a%/*}" == "windows" ] && P1=$$P.exe || P1=$$P ; \
   zip "$(DIRDIST)/$$P-$$GH.zip" "$$P1" README.md ; \
 done
 
-## clean generated distrib files
+## clean generated files
 clean:
 	@echo "*** $@ ***" ; \
 	  for a in "$(ALLARCH)" ; do \
 	    P=$(PRG)_$${a%/*}_$${a#*/} ; \
-	    [ -f $$P ] && rm $$P || true ; \
+	    [ ! -f $$P ] || rm $$P ; \
 	  done
-	@[ -f $$P.exe ] && rm $$P.exe || true ; \
-	@[ -d $(DIRDIST) ] && rm -rf $(DIRDIST) || true
-	@[ -f $(PRG) ] && rm -f $(PRG) || true
+	@[ ! -f $$P.exe ] || rm $$P.exe
+	@[ ! -d $(DIRDIST) ] || rm -rf $(DIRDIST)
+	@[ ! -f $(PRG) ] || rm -f $(PRG)
+	@[ ! -f coverage.out ] || rm coverage.out
 
 # ------------------------------------------------------------------------------
-# DB operations with docker and [dcape](https://github.com/dopos/dcape)
+## Docker operations
+#:
+
+## start service in container
+up:
+up: CMD=up -d $(DC_SERVICE)
+up: dc
+
+## stop service
+down:
+down: CMD=rm -f -s
+down: dc
+
+## build docker image
+docker-build: CMD="build --force-rm $(DC_SERVICE)"
+docker-build: dc
+
+## remove docker image & temp files
+docker-clean:
+	[ "$$($(DOCKER_BIN) images -q $(DC_IMAGE) 2> /dev/null)" = "" ] || $(DOCKER_BIN) rmi $(DC_IMAGE)
+
+
+# ------------------------------------------------------------------------------
+
+# $$PWD usage allows host directory mounts in child containers
+# Thish works if path is the same for host, docker, docker-compose and child container
+## run $(CMD) via docker-compose
+dc: docker-compose.yml
+	@$(DOCKER_BIN) run --rm  -i \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v $$PWD:$$PWD -w $$PWD \
+  --env=DOCKER_IMAGE=$(DOCKER_IMAGE) \
+  --env=GOLANG_VERSION=$(GOLANG_VERSION) \
+  --env=PGPORT=$(PGPORT) --env=PGDATABASE=$(PGDATABASE) \
+  --env=PGUSER=$(PGUSER) --env=PGPASSWORD=$(PGPASSWORD) \
+  docker/compose:$(DC_VER) \
+  -p $(PRG) $(CMD)
+
+# ------------------------------------------------------------------------------
+## Database via docker
 
 # (internal) Wait for postgresql container start
 docker-wait:
@@ -254,7 +289,8 @@ psql-local:
 	@psql
 
 # ------------------------------------------------------------------------------
-## Misc
+## Other
+#:
 
 ## Count lines of code (including tests) and update LOC.md
 cloc: LOC.md
@@ -272,6 +308,24 @@ $(CFG):
 config:
 	@true
 
-## List Makefile targets
-help:  Makefile
-	@grep -A1 "^##" $< | grep -vE '^--$$' | sed -E '/^##/{N;s/^## (.+)\n(.+):(.*)/\t\2:\1/}' | column -t -s ':'
+## update docs at pkg.go.dev
+godoc:
+	vf=$(APP_VERSION) ; v=$${vf%%-*} ; echo "Update for $$v..." ; \
+	curl 'https://proxy.golang.org/$(GODOC_REPO)/@v/'$$v'.info'
+
+## update latest docker image tag at ghcr.io
+ghcr:
+	vf=$(APP_VERSION) ; vs=$${vf%%-*} ; v=$${vs#v} ; echo "Update for $$v..." ; \
+	docker pull $(DOCKER_IMAGE):$$v && \
+	docker tag $(DOCKER_IMAGE):$$v $(DOCKER_IMAGE):latest && \
+	docker push $(DOCKER_IMAGE):latest
+
+
+# This code handles group header and target comment with one or two lines only
+## list Makefile targets
+## (this is default target)
+help:
+	@grep -A 1 -h "^## " $(MAKEFILE_LIST) \
+  | sed -E 's/^--$$// ; /./{H;$$!d} ; x ; s/^\n## ([^\n]+)\n(## (.+)\n)*(.+):(.*)$$/"    " "\4" "\1" "\3"/' \
+  | sed -E 's/^"    " "#" "(.+)" "(.*)"$$/"" "" "" ""\n"\1 \2" "" "" ""/' \
+  | xargs printf "%s\033[36m%-15s\033[0m %s %s\n"

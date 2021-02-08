@@ -6,7 +6,8 @@ steps:
     image: golang:1.13.5
     pull: true
     commands:
-      - go test -test.v -test.race -coverprofile=coverage.out -covermode=atomic -tags test ./...
+      - export VERSION=$(git describe --tags --always)
+      - go test -race -tags test -coverprofile=coverage.out -covermode=atomic ./...
       - curl -s https://codecov.io/bash | bash
     environment:
       CODECOV_TOKEN:
