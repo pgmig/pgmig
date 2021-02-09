@@ -122,17 +122,17 @@ lint:
 	golangci-lint run ./...
 
 ## Run tests and fill coverage.out
-test: coverage.out
+test: clean coverage.out
 
 # internal target
 coverage.out: $(SOURCES)
-	VERSION=$(APP_VERSION) $(GO) test -tags test -race -covermode=atomic -coverprofile=$@ ./...
+	$(GO) test -tags test -race -covermode=atomic -coverprofile=$@ ./...
 
 ## run tests that use services from docker-compose.yml
 test-docker: up-pg test-d down-pg
 
 test-d: export TEST_DSN_PG=postgres://
-test-d: coverage.out
+test-d: clean coverage.out
 
 #pgmig:secret@localhost:$(TEST_PG_PORT)/pgmig_test?sslmode=disable
 
@@ -164,7 +164,7 @@ run:
 
 run-%:
 	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \
-	$(GO) run -ldflags "-X main.version=$(VERSION)" ./cmd/$(PRG)/ $$opts $* $(PKGS)
+	$(GO) run -ldflags "-X main.version=$(APP_VERSION)" ./cmd/$(PRG)/ $$opts $* $(PKGS)
 
 vrun-%:
 	@if [ -n "$$PGMIG_TEST_ROLE" ] && [[ "$$PGMIG_TEST_ROLE" != "$$PGUSER" ]] ; then opts="--mig.var=test_role:$(PGMIG_TEST_ROLE)" ; else opts="" ; fi ; \

@@ -5,11 +5,13 @@ package pgmig
 import (
 	"context"
 	"crypto/md5"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/pgmig/gitinfo"
 
 	"github.com/golang/mock/gomock"
 	"github.com/wojas/genericr"
@@ -29,10 +31,6 @@ type ServerSuite struct {
 	srv *Migrator
 }
 
-var (
-	version = "loaded from git in SetupSuite"
-)
-
 func (ss *ServerSuite) SetupSuite() {
 
 	// Fill config with default values
@@ -46,10 +44,6 @@ func (ss *ServerSuite) SetupSuite() {
 
 	ctrl := gomock.NewController(ss.T())
 	defer ctrl.Finish()
-	v := os.Getenv("VERSION")
-	if v != "" {
-		version = v
-	}
 	ss.srv = New(log, ss.cfg, defaultFS{}, "testdata")
 }
 
@@ -80,10 +74,12 @@ func (ss *ServerSuite) TestRun() {
 	cf := func(file string) string {
 		return string(content(ss.T(), mig, file))
 	}
+	gi := gitinfo.GitInfo{}
+	helperLoadJSON(ss.T(), "a/gitinfo", &gi)
 	ex := tx.EXPECT()
 	gomock.InOrder(
 		ex.Query(ctx, SQLPgMigExists, "pgmig", "pkg").Return(rv, nil),
-		ex.Exec(ctx, fmt.Sprintf(SQLPkgOp, CorePackage, mig.Config.HookBefore), "init", "a", version, "git@github.com:pgmig/pgmig.git").Return(ct0, nil),
+		ex.Exec(ctx, fmt.Sprintf(SQLPkgOp, CorePackage, mig.Config.HookBefore), "init", "a", gi.Version, gi.Repository).Return(ct0, nil),
 		ex.Exec(ctx, cf("a/00_init.sql")),
 		ex.Exec(ctx, cf("a/01_ddl.sql")),
 		ex.Exec(ctx, cf("a/02_ddl.test.sql")),
@@ -91,7 +87,7 @@ func (ss *ServerSuite) TestRun() {
 		ex.Exec(ctx, fmt.Sprintf(SQLScriptProtect, CorePackage, mig.Config.ScriptProtect), "a", "03.once.sql", fmt.Sprintf("%x", md5.Sum(content(ss.T(), mig, "a/03.once.sql")))),
 		ex.Exec(ctx, cf("a/03.once.sql")),
 		ex.Exec(ctx, cf("a/04.new.sql")),
-		ex.Exec(ctx, fmt.Sprintf(SQLPkgOp, CorePackage, mig.Config.HookAfter), "init", "a", version, "git@github.com:pgmig/pgmig.git"),
+		ex.Exec(ctx, fmt.Sprintf(SQLPkgOp, CorePackage, mig.Config.HookAfter), "init", "a", gi.Version, gi.Repository),
 	)
 	mig.MessageChan = make(chan interface{}, 8)
 	commit, err := mig.Run(tx, "init", []string{"a"}) // []string{"a", "b"})
@@ -106,7 +102,7 @@ func (ss *ServerSuite) TestRun() {
 	want := []interface{}{
 		&Status{Exists: false},
 		&Op{Pkg: "a", Op: "init"},
-		&NewVersion{Version: version, Repo: "git@github.com:pgmig/pgmig.git"},
+		&NewVersion{Version: gi.Version, Repo: gi.Repository},
 		&RunFile{Name: "00_init.sql"},
 		&RunFile{Name: "01_ddl.sql"},
 		&RunFile{Name: "02_ddl.test.sql"},
@@ -114,7 +110,6 @@ func (ss *ServerSuite) TestRun() {
 		&RunFile{Name: "04.new.sql"},
 	}
 	assert.Equal(ss.T(), got, want)
-
 }
 
 func content(t *testing.T, mig *Migrator, file string) []byte {
@@ -139,3 +134,11 @@ func content(t *testing.T, mig *Migrator, file string) []byte {
         require.NoError(t, err)
 
 */
+
+func helperLoadJSON(t *testing.T, name string, data interface{}) {
+	path := filepath.Join("testdata", name+".json") // relative path
+	bytes, err := ioutil.ReadFile(path)
+	require.NoError(t, err)
+	err = json.Unmarshal(bytes, &data)
+	require.NoError(t, err)
+}

@@ -254,6 +254,7 @@ func (mig *Migrator) execFiles(tx pgx.Tx, pkgs []pkgDef) (err error) {
 				if err != nil {
 					return
 				}
+				mig.Log.V(1).Info("source git info", "pkg", pkg.Root, "info", info)
 				mig.MessageChan <- &NewVersion{Version: info.Version, Repo: info.Repository}
 
 			}
