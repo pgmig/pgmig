@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/go-logr/logr"
 	"github.com/wojas/genericr"
 )
 
@@ -13,9 +14,11 @@ const (
 )
 
 func TestRunPlugins(t *testing.T) {
-	log := genericr.New(func(e genericr.Entry) {
+	sink := genericr.New(func(e genericr.Entry) {
 		t.Log(e.String())
 	})
+	log := logr.New(sink)
+
 	pgDSN := os.Getenv(PgDsnEnv)
 	if pgDSN == "" {
 		t.Skip("Skipping testing when DSN is empty")

@@ -9,14 +9,16 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/wojas/genericr"
+	"github.com/go-logr/logr"
 
 	"github.com/jackc/pgconn"
 )
 
 func ExampleMigrator_PrintMessages() {
-	log := genericr.New(func(e genericr.Entry) {
+	sink := genericr.New(func(e genericr.Entry) {
 		fmt.Fprintln(os.Stderr, e.String())
 	})
+	log := logr.New(sink)
 	mig := New(log, Config{}, nil, "")
 	mig.IsTerminal = false
 	mig.MessageChan = make(chan interface{}, 50)

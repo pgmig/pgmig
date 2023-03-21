@@ -49,6 +49,18 @@ func (mr *MockTxMockRecorder) Begin(arg0 interface{}) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Begin", reflect.TypeOf((*MockTx)(nil).Begin), arg0)
 }
 
+// BeginFunc mocks base method
+func (m *MockTx) BeginFunc(arg0 context.Context, arg1 func(v4.Tx) error) error {
+	ret := m.ctrl.Call(m, "BeginFunc", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// BeginFunc indicates an expected call of BeginFunc
+func (mr *MockTxMockRecorder) BeginFunc(arg0, arg1 interface{}) *gomock.Call {
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BeginFunc", reflect.TypeOf((*MockTx)(nil).BeginFunc), arg0, arg1)
+}
+
 // Commit mocks base method
 func (m *MockTx) Commit(arg0 context.Context) error {
 	ret := m.ctrl.Call(m, "Commit", arg0)
@@ -145,6 +157,19 @@ func (m *MockTx) Query(arg0 context.Context, arg1 string, arg2 ...interface{}) (
 func (mr *MockTxMockRecorder) Query(arg0, arg1 interface{}, arg2 ...interface{}) *gomock.Call {
 	varargs := append([]interface{}{arg0, arg1}, arg2...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Query", reflect.TypeOf((*MockTx)(nil).Query), varargs...)
+}
+
+// QueryFunc mocks base method
+func (m *MockTx) QueryFunc(arg0 context.Context, arg1 string, arg2, arg3 []interface{}, arg4 func(v4.QueryFuncRow) error) (pgconn.CommandTag, error) {
+	ret := m.ctrl.Call(m, "QueryFunc", arg0, arg1, arg2, arg3, arg4)
+	ret0, _ := ret[0].(pgconn.CommandTag)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// QueryFunc indicates an expected call of QueryFunc
+func (mr *MockTxMockRecorder) QueryFunc(arg0, arg1, arg2, arg3, arg4 interface{}) *gomock.Call {
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "QueryFunc", reflect.TypeOf((*MockTx)(nil).QueryFunc), arg0, arg1, arg2, arg3, arg4)
 }
 
 // QueryRow mocks base method

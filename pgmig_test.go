@@ -15,6 +15,7 @@ import (
 
 	"github.com/golang/mock/gomock"
 	"github.com/wojas/genericr"
+	"github.com/go-logr/logr"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,9 +39,10 @@ func (ss *ServerSuite) SetupSuite() {
 	_, err := p.Parse()
 	require.NoError(ss.T(), err)
 
-	log := genericr.New(func(e genericr.Entry) {
+	sink := genericr.New(func(e genericr.Entry) {
 		ss.T().Log(e.String())
 	})
+	log := logr.New(sink)
 
 	ctrl := gomock.NewController(ss.T())
 	defer ctrl.Finish()
