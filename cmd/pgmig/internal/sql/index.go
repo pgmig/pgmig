@@ -646,210 +646,21 @@ var didx = make(map[string]*directoryAsset)
 var stamp time.Time
 
 func init() {
-	stamp = time.Unix(1679388140, 761452665)
-	bb := blob_bytes(48744)
-	bs := blob_string(48744)
+	stamp = time.Unix(1688848070, 287804108)
+	bb := blob_bytes(136)
+	bs := blob_string(136)
 	root = &directoryAsset{
 		dirs: []directoryAsset{
 			{
 				name: "pgmig",
 				files: []Asset{
 					{
-						name:         ".git",
-						blob:         bb[0:37],
-						str_blob:     bs[0:37],
-						mime:         "application/binary",
-						tag:          "dilmbvavwp76o",
-						size:         37,
-						isCompressed: false,
-					},
-					{
-						name:         ".gitignore",
-						blob:         bb[40:103],
-						str_blob:     bs[40:103],
-						mime:         "application/binary",
-						tag:          "vapqilfgxpmdk",
-						size:         63,
-						isCompressed: false,
-					},
-					{
-						name:         "00_schema.new.sql",
-						blob:         bb[104:564],
-						str_blob:     bs[104:564],
-						mime:         "application/x-sql",
-						tag:          "acb6vu53iyyww",
-						size:         460,
-						isCompressed: false,
-					},
-					{
-						name:         "17_comment.sql",
-						blob:         bb[568:5891],
-						str_blob:     bs[568:5891],
-						mime:         "application/x-sql",
-						tag:          "bykegi7bzx7tw",
-						size:         5323,
-						isCompressed: false,
-					},
-					{
-						name:         "18_assert.sql",
-						blob:         bb[5896:7502],
-						str_blob:     bs[5896:7502],
-						mime:         "application/x-sql",
-						tag:          "oqk2mtxnxqhxw",
-						size:         1606,
-						isCompressed: false,
-					},
-					{
-						name:         "18_assert.test.sql",
-						blob:         bb[7504:7906],
-						str_blob:     bs[7504:7906],
-						mime:         "application/x-sql",
-						tag:          "h6xftflbpz2tc",
-						size:         402,
-						isCompressed: false,
-					},
-					{
-						name:         "19_comment.test.sql",
-						blob:         bb[7912:15665],
-						str_blob:     bs[7912:15665],
-						mime:         "application/x-sql",
-						tag:          "oavqmuc5djhak",
-						size:         7753,
-						isCompressed: false,
-					},
-					{
-						name:         "19_exists.sql",
-						blob:         bb[15672:16242],
-						str_blob:     bs[15672:16242],
-						mime:         "application/x-sql",
-						tag:          "a75tfo34izxkg",
-						size:         570,
-						isCompressed: false,
-					},
-					{
-						name:         "19_search.sql",
-						blob:         bb[16248:16570],
-						str_blob:     bs[16248:16570],
-						mime:         "application/x-sql",
-						tag:          "w5k7x5oxui4mo",
-						size:         322,
-						isCompressed: false,
-					},
-					{
-						name:         "19_t_op.new.sql",
-						blob:         bb[16576:16668],
-						str_blob:     bs[16576:16668],
-						mime:         "application/x-sql",
-						tag:          "tracenhooie5m",
-						size:         92,
-						isCompressed: false,
-					},
-					{
-						name:         "20_pers.new.sql",
-						blob:         bb[16672:17087],
-						str_blob:     bs[16672:17087],
-						mime:         "application/x-sql",
-						tag:          "wizja7mydat4u",
-						size:         415,
-						isCompressed: false,
-					},
-					{
-						name:         "20_pkg.sql",
-						blob:         bb[17088:19114],
-						str_blob:     bs[17088:19114],
-						mime:         "application/x-sql",
-						tag:          "5vyc634d2hlqo",
-						size:         2026,
-						isCompressed: false,
-					},
-					{
-						name:         "20_protected.sql",
-						blob:         bb[19120:21030],
-						str_blob:     bs[19120:21030],
-						mime:         "application/x-sql",
-						tag:          "vzh4xrxeufcna",
-						size:         1910,
-						isCompressed: false,
-					},
-					{
-						name:         "50_cleanup.sql",
-						blob:         bb[21032:21336],
-						str_blob:     bs[21032:21336],
-						mime:         "application/x-sql",
-						tag:          "corvzmk5htz3q",
-						size:         304,
-						isCompressed: false,
-					},
-					{
-						name:         "50_pkg.sql",
-						blob:         bb[21336:33838],
-						str_blob:     bs[21336:33838],
-						mime:         "application/x-sql",
-						tag:          "42yqtwwvevzaw",
-						size:         12502,
-						isCompressed: false,
-					},
-					{
-						name:         "50_pkg.test.sql",
-						blob:         bb[33840:36100],
-						str_blob:     bs[33840:36100],
-						mime:         "application/x-sql",
-						tag:          "q3tu3yyax2gce",
-						size:         2260,
-						isCompressed: false,
-					},
-					{
-						name:         "50_var.sql",
-						blob:         bb[36104:36517],
-						str_blob:     bs[36104:36517],
-						mime:         "application/x-sql",
-						tag:          "if47lzfgehgbq",
-						size:         413,
-						isCompressed: false,
-					},
-					{
-						name:         "60_grant.sql",
-						blob:         bb[36520:36859],
-						str_blob:     bs[36520:36859],
-						mime:         "application/x-sql",
-						tag:          "e3q423trwynzc",
-						size:         339,
-						isCompressed: false,
-					},
-					{
-						name:         "79_assert_fail.sql",
-						blob:         bb[36864:37012],
-						str_blob:     bs[36864:37012],
-						mime:         "application/x-sql",
-						tag:          "7gxloirxbhma4",
-						size:         148,
-						isCompressed: false,
-					},
-					{
-						name:         "LICENSE",
-						blob:         bb[37016:48373],
-						str_blob:     bs[37016:48373],
-						mime:         "application/binary",
-						tag:          "5x6p4joesftny",
-						size:         11357,
-						isCompressed: false,
-					},
-					{
-						name:         "README.md",
-						blob:         bb[48376:48594],
-						str_blob:     bs[48376:48594],
-						mime:         "text/markdown; charset=utf-8",
-						tag:          "xtwrtrueicvu6",
-						size:         311,
-						isCompressed: true,
-					},
-					{
 						name:         "gitinfo.json",
-						blob:         bb[48600:48737],
-						str_blob:     bs[48600:48737],
+						blob:         bb[0:132],
+						str_blob:     bs[0:132],
 						mime:         "application/json",
-						tag:          "juh5g336zarcw",
-						size:         137,
+						tag:          "dhncyilr55nu2",
+						size:         132,
 						isCompressed: false,
 					},
 				},
@@ -858,26 +669,5 @@ func init() {
 	}
 	didx[""] = root
 	didx["pgmig"] = &root.dirs[0]
-	fidx["pgmig/.git"] = &root.dirs[0].files[0]
-	fidx["pgmig/.gitignore"] = &root.dirs[0].files[1]
-	fidx["pgmig/00_schema.new.sql"] = &root.dirs[0].files[2]
-	fidx["pgmig/17_comment.sql"] = &root.dirs[0].files[3]
-	fidx["pgmig/18_assert.sql"] = &root.dirs[0].files[4]
-	fidx["pgmig/18_assert.test.sql"] = &root.dirs[0].files[5]
-	fidx["pgmig/19_comment.test.sql"] = &root.dirs[0].files[6]
-	fidx["pgmig/19_exists.sql"] = &root.dirs[0].files[7]
-	fidx["pgmig/19_search.sql"] = &root.dirs[0].files[8]
-	fidx["pgmig/19_t_op.new.sql"] = &root.dirs[0].files[9]
-	fidx["pgmig/20_pers.new.sql"] = &root.dirs[0].files[10]
-	fidx["pgmig/20_pkg.sql"] = &root.dirs[0].files[11]
-	fidx["pgmig/20_protected.sql"] = &root.dirs[0].files[12]
-	fidx["pgmig/50_cleanup.sql"] = &root.dirs[0].files[13]
-	fidx["pgmig/50_pkg.sql"] = &root.dirs[0].files[14]
-	fidx["pgmig/50_pkg.test.sql"] = &root.dirs[0].files[15]
-	fidx["pgmig/50_var.sql"] = &root.dirs[0].files[16]
-	fidx["pgmig/60_grant.sql"] = &root.dirs[0].files[17]
-	fidx["pgmig/79_assert_fail.sql"] = &root.dirs[0].files[18]
-	fidx["pgmig/LICENSE"] = &root.dirs[0].files[19]
-	fidx["pgmig/README.md"] = &root.dirs[0].files[20]
-	fidx["pgmig/gitinfo.json"] = &root.dirs[0].files[21]
+	fidx["pgmig/gitinfo.json"] = &root.dirs[0].files[0]
 }
