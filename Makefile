@@ -147,7 +147,7 @@ cov-html: coverage.out
 	$(GO) tool cover -html=coverage.out
 
 ## Build app
-build: gen $(PRG)
+build: $(PRG)
 
 $(PRG): $(SOURCES)
 	GOOS=$(OS) GOARCH=$(ARCH) $(GO) build -v -o $@ -ldflags \
