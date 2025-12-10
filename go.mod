@@ -2,6 +2,9 @@ module github.com/pgmig/pgmig
 
 go 1.24.3
 
+// Dependabot alert #27
+require golang.org/x/crypto v0.45.0 // indirect
+
 require (
 	github.com/go-logr/logr v1.4.3
 	github.com/go-logr/zapr v1.3.0
@@ -28,8 +31,7 @@ require (
 	github.com/jackc/pgtype v1.14.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
-	golang.org/x/crypto v0.20.0 // indirect
-	golang.org/x/sys v0.29.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/text v0.31.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
