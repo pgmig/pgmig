@@ -14,7 +14,7 @@ require (
 	github.com/jackc/pgx/v4 v4.18.3
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/mattn/go-colorable v0.1.14
-	github.com/mattn/go-isatty v0.0.20
+	github.com/mattn/go-isatty v0.0.21
 	github.com/pgmig/gitinfo v0.12.1
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.11.1
