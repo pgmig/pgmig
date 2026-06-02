@@ -13,7 +13,7 @@ require (
 	github.com/jackc/pgproto3/v2 v2.3.3
 	github.com/jackc/pgx/v4 v4.18.3
 	github.com/jessevdk/go-flags v1.6.1
-	github.com/mattn/go-colorable v0.1.14
+	github.com/mattn/go-colorable v0.1.15
 	github.com/mattn/go-isatty v0.0.22
 	github.com/pgmig/gitinfo v0.12.1
 	github.com/pkg/errors v0.9.1
