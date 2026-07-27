@@ -6,7 +6,7 @@ go 1.24.3
 require golang.org/x/crypto v0.45.0 // indirect
 
 require (
-	github.com/go-logr/logr v1.4.3
+	github.com/go-logr/logr v1.4.4
 	github.com/go-logr/zapr v1.3.0
 	github.com/golang/mock v1.6.0
 	github.com/jackc/pgconn v1.14.3
